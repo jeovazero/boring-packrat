@@ -4,7 +4,7 @@ let
 
   inherit (nixpkgs) pkgs;
 
-  inherit (pkgs) haskell cabal2nix cabal-install;
+  inherit (pkgs) haskell cabal2nix cabal-install ghcid;
 
   haskellPackages = haskell.packages.ghc884;
 
@@ -17,5 +17,6 @@ in pkgs.stdenv.mkDerivation {
     cabal-install
     cabal2nix
     ghcide
+    ghcid
   ];
 }
