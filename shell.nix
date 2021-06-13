@@ -10,10 +10,12 @@ let
 
   ghcide = haskellPackages.ghcide;
 
+  project = import ./default.nix {};
+
 in pkgs.stdenv.mkDerivation {
   name = "shell";
 
-  buildInputs = [
+  buildInputs = project.env.nativeBuildInputs ++ [
     cabal-install
     cabal2nix
     ghcide
