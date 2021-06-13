@@ -4,13 +4,10 @@ let
 
   inherit (nixpkgs) pkgs;
 
-  inherit (pkgs)
-    haskell cabal2nix cabal-install;
+  inherit (pkgs) haskell cabal2nix cabal-install;
 
   haskellPackages = haskell.packages.ghc884;
 
-  # hls doesn't work well with haskell templates
-  # https://github.com/haskell/haskell-language-server/issues/1431
   ghcide = haskellPackages.ghcide;
 
 in pkgs.stdenv.mkDerivation {
