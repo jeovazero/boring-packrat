@@ -4,6 +4,7 @@ import Data.Word (Word8)
 import Data.List as L
 import Data.Char as C
 import Data.Set as Set
+import Prelude as P
 import qualified Data.Word8 as W
 import Debug.Trace (trace, traceShowId)
 
@@ -270,6 +271,16 @@ decodeFoo (foo, words@(x:xs)) =
       if haveAtLeastOne result
       then Right (Many1 f1, ys)
       else Left $ "FMany1 " ++ show (f1, words)
+    Many (a,b) f1 ->
+      let
+        (result, ys) = spanFoo f1 ([], words)
+        len = P.length result
+      in
+      if len >= a && len <= b
+      then Right (Many (a,b) f1, ys)
+      else Left $ "FMany " ++ show (f1, words)
+    Repeat n f1 ->
+      decodeFoo (Many (n,n) f1, words)
     At ->
       if x == W._at
       then Right (At, xs)
@@ -333,10 +344,3 @@ main = do
   print
     $ fmap (\(x,y) -> (pack y))
     $ decodeFoo (_Email, unpack "foo-ze-ze@ze-.com")
-
-
-{- foo-ze-ze.
-  [a-z]+(-[a-z]+)*
-
-  &(-.)
--}
