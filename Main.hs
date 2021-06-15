@@ -308,7 +308,7 @@ decodeFoo (foo, words@(x:xs)) =
     Choice flist ->
       case alternativeFoo flist words of
         Just result -> Right result
-        Nothing -> Left ("FHyphen " ++ show [C.chr $ fromIntegral x])
+        Nothing -> Left ("FChoice " ++ show [C.chr $ fromIntegral x])
     Optional f1  ->
       case decodeFoo (f1,words) of
         Left e -> Right (Optional f1, words)
@@ -317,10 +317,28 @@ decodeFoo (foo, words@(x:xs)) =
       case decodeFoo (f1, words) of
         Left e -> Left "FAnd "
         Right (f,_) -> Right (f, words)
+    Not f1 ->
+      error "Not implemented"
     Lit w ->
       if x == w
       then Right (Lit w, xs)
       else Left ("Lit " ++ show [C.chr $ fromIntegral w])
+    LitWord ws ->
+      case L.stripPrefix ws words of
+        Just rest -> Right (LitWord ws, rest)
+        _ -> Left ("LitWords " ++ show [pack ws])
+    HexDigit ->
+      error "Not implemented HexDigit"
+    CR ->
+      decodeFoo (Lit W._cr, words)
+    LF ->
+      decodeFoo (Lit W._lf, words)
+    Dquote ->
+      decodeFoo (Lit W._quotedbl, words)
+    Tab ->
+      decodeFoo (Lit W._tab, words)
+    SP ->
+      decodeFoo (Lit W._space, words)
     Range (a,b) ->
       if x >= a && x <= b
       then Right (Range (a,b), xs)
@@ -329,8 +347,7 @@ decodeFoo (foo, words@(x:xs)) =
       if Set.member x textSpecialsSet
       then Right (TextSpecials, xs)
       else Left ("TextSpecials " ++ show [C.chr $ fromIntegral x])
-    _ ->
-      Left (show "foo")
+
 _FDumbEmail
   = Many1 Alpha -- +[a-zA-Z]
   # At           -- @
@@ -344,3 +361,6 @@ main = do
   print
     $ fmap (\(x,y) -> (pack y))
     $ decodeFoo (_Email, unpack "foo-ze-ze@ze-.com")
+  print
+    $ fmap (\(x,y) -> (pack y))
+    $ decodeFoo (Lit W._a # SP # Lit W._j, unpack "a jeovp")
