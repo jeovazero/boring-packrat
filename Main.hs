@@ -328,7 +328,9 @@ decodeFoo (foo, words@(x:xs)) =
         Just rest -> Right (LitWord ws, rest)
         _ -> Left ("LitWords " ++ show [pack ws])
     HexDigit ->
-      error "Not implemented HexDigit"
+      if W.isHexDigit x
+      then Right (TextSpecials, xs)
+      else Left ("TextSpecials " ++ show [C.chr $ fromIntegral x])
     CR ->
       decodeFoo (Lit W._cr, words)
     LF ->
@@ -364,3 +366,6 @@ main = do
   print
     $ fmap (\(x,y) -> (pack y))
     $ decodeFoo (Lit W._a # SP # Lit W._j, unpack "a jeovp")
+  print
+    $ fmap (\(x,y) -> (pack y))
+    $ decodeFoo (HexDigit # HexDigit # HexDigit, unpack "aB232")
