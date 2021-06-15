@@ -22,4 +22,5 @@ executable boring-peg-like-parser
                        word8,
                        containers
   -- hs-source-dirs:
+  ghc-options:         -fwarn-incomplete-patterns -fwarn-incomplete-uni-patterns
   default-language:    Haskell2010

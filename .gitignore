@@ -1,3 +1,4 @@
 result
 *.hi
 *.o
+dist-newstyle
