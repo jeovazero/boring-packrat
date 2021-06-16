@@ -318,7 +318,9 @@ decodeFoo (foo, words@(x:xs)) =
         Left e -> Left "FAnd "
         Right (f,_) -> Right (f, words)
     Not f1 ->
-      error "Not implemented"
+      case decodeFoo (f1, words) of
+        Left e -> Right (Not f1, words)
+        Right (f,_) -> Left "FNot "
     Lit w ->
       if x == w
       then Right (Lit w, xs)
@@ -369,3 +371,7 @@ main = do
   print
     $ fmap (\(x,y) -> (pack y))
     $ decodeFoo (HexDigit # HexDigit # HexDigit, unpack "aB232")
+  print
+    $ fmap (\(x,y) -> (pack y))
+    $ decodeFoo (Not Digit # HexDigit # HexDigit, unpack "aB232")
+
