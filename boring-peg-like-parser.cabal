@@ -13,15 +13,26 @@ maintainer:          contato@jeova.ninja
 -- category:
 build-type:          Simple
 
+library
+  default-language:    Haskell2010
+  hs-source-dirs:      lib
+  exposed-modules:     BoringPEG
+  build-depends:       base >=4.13 && <4.14,
+                       bytestring,
+                       word8,
+                       containers
+
+  ghc-options:         -Wall
+
 executable boring-peg-like-parser
   main-is:             Main.hs
   -- other-modules:
   -- other-extensions:
   build-depends:       base >=4.13 && <4.14,
+                       boring-peg-like-parser,
                        bytestring,
                        word8,
-                       containers,
-                       hspec
+                       containers
   -- hs-source-dirs:
   ghc-options:         -fwarn-incomplete-patterns -fwarn-incomplete-uni-patterns
   default-language:    Haskell2010
