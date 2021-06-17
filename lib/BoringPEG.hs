@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module BoringPEG (decodeFoo, _Email, Foo(..), (#)) where
+module BoringPEG (decodePeg, _Email, Peg(..), (#)) where
 
 import Data.ByteString as B
 import Data.Word (Word8)
@@ -10,16 +10,16 @@ import Prelude as P
 import qualified Data.Word8 as W
 import Debug.Trace (trace, traceShowId)
 
-data Foo
-  = Sequence Foo Foo
-  | Many0 Foo
-  | Many1 Foo
-  | Many (Int,Int) Foo
-  | Repeat Int Foo -- alias for `Many (n, n) Foo`
-  | Choice [Foo]
-  | Optional Foo
-  | And Foo
-  | Not Foo
+data Peg
+  = Sequence Peg Peg
+  | Many0 Peg
+  | Many1 Peg
+  | Many (Int,Int) Peg
+  | Repeat Int Peg -- alias for `Many (n, n) Peg`
+  | Choice [Peg]
+  | Optional Peg
+  | And Peg
+  | Not Peg
   | Lit Word8
   | LitWord [Word8]
   | Range (Word8,Word8)
@@ -236,51 +236,51 @@ _Ccontent = Choice [_Ctext, _QuotedPair, _Comment]
 -- printable ascii, not '(' ')' '\'
 _Ctext = Choice [Range (33,39), Range(42, 91), Range (93, 126)]
 
-spanFoo :: Foo -> ([Foo], [Word8]) -> ([Foo], [Word8])
-spanFoo _ (a,[]) = (L.reverse a, [])
-spanFoo foo (a,xs) = case decodeFoo (foo, xs) of
+spanPeg :: Peg -> ([Peg], [Word8]) -> ([Peg], [Word8])
+spanPeg _ (a,[]) = (L.reverse a, [])
+spanPeg foo (a,xs) = case decodePeg (foo, xs) of
         Left _ -> (a,xs)
-        Right (f,w) -> spanFoo foo (f:a,w)
+        Right (f,w) -> spanPeg foo (f:a,w)
 
-alternativeFoo :: [Foo] -> [Word8] -> Maybe (Foo, [Word8])
-alternativeFoo [] words = Nothing
-alternativeFoo (foo:xs) words = case decodeFoo (foo, words) of
-    Left _ -> alternativeFoo xs words
+alternativePeg :: [Peg] -> [Word8] -> Maybe (Peg, [Word8])
+alternativePeg [] words = Nothing
+alternativePeg (foo:xs) words = case decodePeg (foo, words) of
+    Left _ -> alternativePeg xs words
     Right (f,w) -> Just (f, w)
 
 haveAtLeastOne [] = False
 haveAtLeastOne (x:xs) = True
 
-decodeFoo :: Parse Foo -> Either String (Parse Foo)
-decodeFoo (foo, []) =
+decodePeg :: Parse Peg -> Either String (Parse Peg)
+decodePeg (foo, []) =
   case foo of
     Many0 f -> Right (Many0 f, [])
     Optional f -> Right (Optional f, [])
     _ -> Left "Empty list"
-decodeFoo (foo, words@(x:xs)) =
+decodePeg (foo, words@(x:xs)) =
   case foo of
     Sequence f1 f2 -> do
-      (g1, xs') <- decodeFoo (f1,words)
-      (g2, ys) <- decodeFoo (f2,xs')
+      (g1, xs') <- decodePeg (f1,words)
+      (g2, ys) <- decodePeg (f2,xs')
       Right (Sequence g1 g2, ys)
     Many0 f1 ->
-      let (result, ys) = spanFoo f1 ([], words) in
+      let (result, ys) = spanPeg f1 ([], words) in
       Right (Many0 f1, ys)
     Many1 f1 ->
-      let (result, ys) = spanFoo f1 ([], words) in
+      let (result, ys) = spanPeg f1 ([], words) in
       if haveAtLeastOne result
       then Right (Many1 f1, ys)
       else Left $ "FMany1 " ++ show (f1, words)
     Many (a,b) f1 ->
       let
-        (result, ys) = spanFoo f1 ([], words)
+        (result, ys) = spanPeg f1 ([], words)
         len = P.length result
       in
       if len >= a && len <= b
       then Right (Many (a,b) f1, ys)
       else Left $ "FMany " ++ show (f1, words)
     Repeat n f1 ->
-      decodeFoo (Many (n,n) f1, words)
+      decodePeg (Many (n,n) f1, words)
     Alpha ->
       if W.isAlpha x
       then Right (Alpha, xs)
@@ -298,19 +298,19 @@ decodeFoo (foo, words@(x:xs)) =
       then Right (Specials, xs)
       else Left ("Specials " ++ show [C.chr $ fromIntegral x])
     Choice flist ->
-      case alternativeFoo flist words of
+      case alternativePeg flist words of
         Just result -> Right result
         Nothing -> Left ("FChoice " ++ show [C.chr $ fromIntegral x])
     Optional f1  ->
-      case decodeFoo (f1,words) of
+      case decodePeg (f1,words) of
         Left e -> Right (Optional f1, words)
         Right (f,w) -> Right (Optional f, w)
     And f1 ->
-      case decodeFoo (f1, words) of
+      case decodePeg (f1, words) of
         Left e -> Left "FAnd "
         Right (f,_) -> Right (f, words)
     Not f1 ->
-      case decodeFoo (f1, words) of
+      case decodePeg (f1, words) of
         Left e -> Right (Not f1, words)
         Right (f,_) -> Left "FNot "
     Lit w ->
@@ -326,15 +326,15 @@ decodeFoo (foo, words@(x:xs)) =
       then Right (TextSpecials, xs)
       else Left ("TextSpecials " ++ show [C.chr $ fromIntegral x])
     CR ->
-      decodeFoo (Lit W._cr, words)
+      decodePeg (Lit W._cr, words)
     LF ->
-      decodeFoo (Lit W._lf, words)
+      decodePeg (Lit W._lf, words)
     Dquote ->
-      decodeFoo (Lit W._quotedbl, words)
+      decodePeg (Lit W._quotedbl, words)
     Tab ->
-      decodeFoo (Lit W._tab, words)
+      decodePeg (Lit W._tab, words)
     SP ->
-      decodeFoo (Lit W._space, words)
+      decodePeg (Lit W._space, words)
     Range (a,b) ->
       if x >= a && x <= b
       then Right (Range (a,b), xs)
