@@ -23,8 +23,6 @@ data Foo
   | Lit Word8
   | LitWord [Word8]
   | Range (Word8,Word8)
-  | Dot
-  | At
   | Alpha
   | Digit
   | HexDigit
@@ -38,14 +36,14 @@ data Foo
   | SP -- space
   deriving (Show)
 
--- HEXDIG = DIGIT / "A" / "B" / "C" / "D" / "E" / "F"
-
 type Parse a = (a, [Word8])
 (#) = Sequence
 
 _WSP = Choice [SP, Tab]
 _CRLF = CR # LF
 _VCHAR = Range (0x21, 0x73) -- visible (printing) characters
+_At = Lit W._at -- '@'
+_Dot = Lit W._period -- '.'
 
 specials
   = [ W._braceleft  -- '('
@@ -95,13 +93,13 @@ specialsSet = Set.fromList specials
 --
 
 -- Local-part "@" ( Domain / address-literal )
-_Email = _LocalPart # At # Choice [_Domain, _AddressLiteral]
+_Email = _LocalPart # _At # Choice [_Domain, _AddressLiteral]
 
 -- Dot-string / Quoted-string
 _LocalPart = Choice [_DotString, _QuotedString]
 
 -- sub-domain *("." sub-domain)
-_Domain = _Subdomain # Many0 (Dot # _Subdomain)
+_Domain = _Subdomain # Many0 (_Dot # _Subdomain)
 
 -- (ALPHA / DIGIT) [*(ALPHA / DIGIT / "-") (ALPHA / DIGIT)]
 -- or (ALPHA / DIGIT) *(*("-") (ALPHA / DIGIT)) for PEGs
@@ -157,7 +155,7 @@ _IPv6v4Full
   # _IPV4AddessLiteral
 
 -- Atom *("."  Atom)
-_DotString = _Atom # Many1 (Dot # _Atom)
+_DotString = _Atom # Many1 (_Dot # _Atom)
 
 -- [IPv6-hex *3(":" IPv6-hex)] "::" [IPv6-hex *3(":" IPv6-hex) ":"] IPv4-address-literal
 -- The "::" represents at least 2 16-bit groups of
@@ -178,7 +176,7 @@ _DotAtom
   # Optional _CFWS
 
 -- 1*atext *("." 1*atext)
-_DotAtomText = Many1 _Atext # Many0 (Dot # Many1 _Atext)
+_DotAtomText = Many1 _Atext # Many0 (_Dot # Many1 _Atext)
 
 _Atext = Choice [AlphaDigit, TextSpecials]
 
@@ -283,14 +281,6 @@ decodeFoo (foo, words@(x:xs)) =
       else Left $ "FMany " ++ show (f1, words)
     Repeat n f1 ->
       decodeFoo (Many (n,n) f1, words)
-    At ->
-      if x == W._at
-      then Right (At, xs)
-      else Left ("FAt " ++ show [C.chr $ fromIntegral x])
-    Dot ->
-      if x == W._period -- '.'
-      then Right (Dot, xs)
-      else Left ("FDot" ++ show [C.chr $ fromIntegral x])
     Alpha ->
       if W.isAlpha x
       then Right (Alpha, xs)
@@ -353,5 +343,4 @@ decodeFoo (foo, words@(x:xs)) =
       if Set.member x textSpecialsSet
       then Right (TextSpecials, xs)
       else Left ("TextSpecials " ++ show [C.chr $ fromIntegral x])
-
 
