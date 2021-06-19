@@ -4,10 +4,9 @@ import BoringPEG.EmailSpec (_Email)
 import qualified Data.Word8 as W
 import Data.ByteString
 
-
 printPEG peg str = do
   print
-    $ fmap (\(x,y) -> (pack y))
+    $ fmap (\(x,y) -> (x,pack y))
     $ decodePEG (peg, unpack str)
 
 main = do

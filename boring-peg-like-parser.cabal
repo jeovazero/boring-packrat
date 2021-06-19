@@ -44,6 +44,7 @@ test-suite spec
   hs-source-dirs:     test
   ghc-options:        -Wall
   build-depends:      base >= 4.13 && <4.14,
+                      boring-peg-like-parser,
                       hspec,
                       bytestring,
                       word8,

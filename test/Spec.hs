@@ -1,6 +1,17 @@
+{-# Language OverloadedStrings #-}
 import Test.Hspec
+import Data.Word8 as W
+import Data.ByteString
+import BoringPEG (decodePEG, PEG(..))
+
+consumePEG peg str =
+    case decodePEG (peg, unpack str) of
+        Right (_,rest) -> Just $ pack rest
+        Left _ -> Nothing
 
 main = hspec $ do
-    describe "2 + 2" $ do
-        it "adds 2 + 2 to equal 4" $
-            2 + 2 `shouldBe` 4
+    describe "Sequence" $ do
+        it "sequence of literals" $ do
+            consumePEG (Sequence (Lit W._a) (Lit W._b)) "abc" `shouldBe` Just "c"
+        it "sequence of digits" $ do
+            consumePEG (Sequence Digit Digit) "454bc" `shouldBe` Just "4bc"
