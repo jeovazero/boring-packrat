@@ -1,16 +1,14 @@
 let
 
-  nixpkgs = import ./nix/pinnedNix.nix { };
+  nixpkgs = import ./nix/pinned.nix { };
 
   inherit (nixpkgs) pkgs;
 
   inherit (pkgs) haskell cabal2nix cabal-install ghcid;
 
-  haskellPackages = haskell.packages.ghc884;
+  haskellPackages = haskell.packages.ghc8104;
 
-  ghcide = haskellPackages.ghcide;
-
-  project = import ./default.nix {};
+  project = import ./default.nix;
 
 in pkgs.stdenv.mkDerivation {
   name = "shell";
@@ -18,7 +16,6 @@ in pkgs.stdenv.mkDerivation {
   buildInputs = project.env.nativeBuildInputs ++ [
     cabal-install
     cabal2nix
-    ghcide
     ghcid
   ];
 }
