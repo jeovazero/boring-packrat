@@ -33,7 +33,8 @@ executable boring-peg-like-parser
                        boring-peg-like-parser,
                        bytestring,
                        word8,
-                       containers
+                       containers,
+                       vector
   -- hs-source-dirs:
   ghc-options:         -fwarn-incomplete-patterns -fwarn-incomplete-uni-patterns
   default-language:    Haskell2010
