@@ -6,12 +6,15 @@ import Data.List as L
 import qualified Data.Word8 as W
 import qualified Data.Vector as V
 import Debug.Trace (trace, traceShowId)
+import Data.Set as Set
 
 data PEG
   = Sequence PEG PEG
   | Many0 PEG
   | Many1 PEG
+  | ManyN Int PEG
   | Many (Int,Int) PEG
+  | Many' (Int, Maybe Int) PEG
   | Repeat Int PEG -- alias for `Many (n, n) PEG`
   | Choice [PEG]
   | Optional PEG
@@ -40,6 +43,47 @@ data Terminal'
   | Tab
   | SP -- space
   deriving (Show)
+
+specials
+  = [ W._braceleft    -- '('
+    , W._braceright   -- ')'
+    , W._less         -- '<'
+    , W._greater      -- '>'
+    , W._bracketleft  -- '['
+    , W._bracketright -- ']'
+    , W._colon        -- ':'
+    , W._semicolon    -- ';'
+    , W._at           -- '@'
+    , W._backslash    -- '\\'
+    , W._comma        -- ','
+    , W._period       -- '.'
+    , W._quotedbl     -- '"'
+    ]
+
+text_specials
+  = [ W._exclam      -- '!'
+    , W._numbersign  -- '#'
+    , W._dollar      -- '$'
+    , W._percent     -- '%'
+    , W._ampersand   -- '&'
+    , W._quotesingle -- '\''
+    , W._asterisk    -- '*'
+    , W._plus        -- '+'
+    , W._hyphen      -- '-'
+    , W._slash       -- '/'
+    , W._equal       -- '='
+    , W._question    -- '?'
+    , W._circum      -- '^'
+    , W._underscore  -- '_'
+    , W._grave       -- '`'
+    , W._braceleft   -- '{'
+    , W._braceright  -- '}'
+    , W._bar         -- '|'
+    , W._tilde       -- '~'
+    ]
+
+textSpecialsSet = Set.fromList text_specials
+specialsSet = Set.fromList specials
 
 type RuleName = ByteString
 type NonTerminal' = (RuleName,PEG)
@@ -72,11 +116,6 @@ remapNT name2IndexMap peg =
     Sequence pegA pegB -> Sequence (remapNT name2IndexMap pegA) (remapNT name2IndexMap pegB)
     other -> other
 
-getIndexLayer layer =
-  case char layer of
-    NotParsed -> -1
-    Parsed (a,_) _ layer' -> a
-
 isParsed (Parsed _ _ _) = True
 isParsed _ = False
 
@@ -94,6 +133,18 @@ parse nonTerms word = parse' (0, B.length word)
             NotParsed -> NotParsed
         Nothing -> NotParsed
     usePegNT layer index = (ans layer) V.! index
+    repeatPeg' peg max count layer lastResult
+      | count >= max = (count, lastResult)
+      | otherwise =
+          case parsePeg layer peg of
+            result@(Parsed (a,b) ast layer') ->
+              repeatPeg' peg max (count + 1) layer' result
+            NotParsed -> (count,lastResult)
+    repeatPeg peg count layer lastResult =
+      case parsePeg layer peg of
+        result@(Parsed (a,b) ast layer') ->
+          repeatPeg peg (count + 1) layer' result
+        NotParsed -> (count, lastResult)
     parsePeg layer peg =
       case char layer of
         NotParsed -> NotParsed
@@ -105,10 +156,71 @@ parse nonTerms word = parse' (0, B.length word)
                 case L.find isParsed $ fmap (parsePeg layer) pegs of
                   Just parsed -> parsed
                   Nothing -> NotParsed
+              Optional peg' ->
+                case parsePeg layer peg' of
+                  NotParsed -> Parsed (a,a-1) ast layer
+                  result -> result
+              And peg' ->
+                case parsePeg layer peg' of
+                  NotParsed -> NotParsed
+                  _ -> Parsed (a,a-1) ast layer 
+              Not peg' ->
+                case parsePeg layer peg' of
+                  NotParsed -> Parsed (a,a-1) ast layer 
+                  _ -> NotParsed
+              Many' (min, maybeMax) peg' ->
+                case maybeMax of
+                  Just max ->
+                    let
+                      (count, result) = repeatPeg' peg' max 0 layer NotParsed
+                    in
+                      if min <= count && count <= max 
+                      then result
+                      else NotParsed
+                  Nothing ->
+                    let
+                      (count, result) = repeatPeg peg' 0 layer NotParsed
+                    in
+                      if min <= count
+                      then result
+                      else NotParsed
+              Many0 peg' -> parsePeg layer $ Many' (0, Nothing) peg'
+              Many1 peg' -> parsePeg layer $ Many' (1, Nothing) peg'
+              ManyN n peg' -> parsePeg layer $ Many' (n, Nothing) peg'
+              Many (min,max) peg' -> parsePeg layer $ Many' (min, Just max) peg'
               Terminal term ->
                 case term of
                   Lit w -> if x == w then Parsed (a,a) ast layer' else NotParsed
                   Digit -> if W.isDigit x then Parsed (a,a) ast layer'  else NotParsed
+                  HexDigit ->
+                    if W.isHexDigit x
+                    then Parsed (a,a) ast layer'
+                    else NotParsed
+                  Alpha ->
+                    if W.isAlpha x
+                    then Parsed (a,a) ast layer'
+                    else NotParsed
+                  AlphaDigit ->
+                    if W.isAlphaNum x
+                    then Parsed (a,a) ast layer'
+                    else NotParsed
+                  CR -> parsePeg layer $ Terminal $ Lit W._cr
+                  LF -> parsePeg layer $ Terminal $ Lit W._lf
+                  Dquote -> parsePeg layer $ Terminal $ Lit W._quotedbl
+                  Tab -> parsePeg layer $ Terminal $ Lit W._tab
+                  SP -> parsePeg layer $ Terminal $ Lit W._space
+                  Range (from,to) -> 
+                    if x >= from && x <= to
+                    then Parsed (a,a) ast layer'
+                    else NotParsed
+                  Specials ->
+                    if Set.member x specialsSet
+                    then Parsed (a,a) ast layer'
+                    else NotParsed
+                  TextSpecials ->
+                    if Set.member x textSpecialsSet
+                    then Parsed (a,a) ast layer'
+                    else NotParsed
                   _ -> error "not implemented"
               NT index -> usePegNT layer index
               Sequence pegA pegB ->
@@ -131,7 +243,7 @@ parse nonTerms word = parse' (0, B.length word)
   
 main = do
   -- let a = "(1+1)+(2*(2+1*(3*5+(9+1*(3*4*(1*3+(2+1*(1+6*(1*(1+(1*(2*3+(1+3*(3+3)))))))))))))))"
-  let a = "(1+1)"
+  let a = "1+1)"
   -- let a = "(0+1+2+3)"
   let x = ans $ parse nonTerms a
   case x V.!? 0 of
