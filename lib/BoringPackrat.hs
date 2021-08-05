@@ -7,9 +7,11 @@ import qualified Data.Word8 as W
 import qualified Data.Vector as V
 import Debug.Trace (trace, traceShowId)
 import Data.Set as Set
+import Prelude as P
 
 data PEG
-  = Sequence PEG PEG
+  = Cons PEG PEG
+  | Sequence [PEG]
   | Many0 PEG
   | Many1 PEG
   | ManyN Int PEG
@@ -25,11 +27,12 @@ data PEG
   | NT Int
   deriving (Show)
 
-(#) = Sequence
+(#) = Cons
 
 data Terminal'
   = Lit Word8
   | LitWord [Word8]
+  | LitBS ByteString
   | Range (Word8,Word8)
   | Alpha
   | Digit
@@ -96,14 +99,7 @@ data Layer = Layer {
   char :: Result
 } deriving (Show)
 
-data AST = Seq AST AST | R Int AST | Chr ByteString | Void deriving (Show)
-
-nonTerms =
-  [ ("Add", Choice [NonTerminal "Mult" # Terminal (Lit W._plus) # NonTerminal "Add", NonTerminal "Mult"])
-  , ("Mult", Choice [NonTerminal "Prim" # Terminal (Lit W._asterisk) # NonTerminal "Mult", NonTerminal "Prim"])
-  , ("Prim", Choice [Terminal (Lit W._parenleft) # NonTerminal "Add" # Terminal (Lit W._parenright), NonTerminal "Dec"])
-  , ("Dec", Terminal Digit)
-  ] :: [(RuleName,PEG)]
+data AST = Seq AST AST | Rule ByteString AST | R Int AST | Chr ByteString | Void deriving (Show)
 
 remapNT name2IndexMap peg =
   case peg of
@@ -113,11 +109,13 @@ remapNT name2IndexMap peg =
       case Map.lookup nonTermName name2IndexMap of
         Just index -> NT index
         Nothing -> error "Rule name not Expected"
-    Sequence pegA pegB -> Sequence (remapNT name2IndexMap pegA) (remapNT name2IndexMap pegB)
+    Cons pegA pegB -> Cons (remapNT name2IndexMap pegA) (remapNT name2IndexMap pegB)
     other -> other
 
 isParsed (Parsed _ _ _) = True
 isParsed _ = False
+
+substr (a,b) = B.take (b - a + 1) . B.drop a
 
 parse :: [NonTerminal'] -> ByteString -> Layer
 parse nonTerms word = parse' (0, B.length word)
@@ -125,14 +123,28 @@ parse nonTerms word = parse' (0, B.length word)
     indexes = L.zipWith (\i (name,rule) -> (name,rule,i)) [0..] nonTerms
     name2IndexMap = Map.fromList $ fmap (\(name,_,i) -> (name,i)) indexes
     nonTermsVec = V.fromList $ fmap (\(_,rule,_) -> remapNT name2IndexMap rule) indexes
+    indexToNameVec = V.fromList $ fmap (\(name,_,_) -> name) indexes
     parsePegNT = \layer index ->
       case nonTermsVec V.!? index of
         Just peg' ->
           case parsePeg layer peg' of
-            Parsed r ast l -> Parsed r (R index ast) l
+            Parsed r ast l -> Parsed r (Rule (indexToNameVec V.! index) ast) l
             NotParsed -> NotParsed
         Nothing -> NotParsed
     usePegNT layer index = (ans layer) V.! index
+    parseWord [] layer accIndex acc =
+      case acc of
+        NotParsed -> NotParsed
+        Parsed (_,b) _ layer' ->
+          Parsed range (Chr $ substr range word) layer'
+            where range = (accIndex,b)
+    parseWord (w:ws) layer accIndex acc =
+      case parsePeg layer (Terminal $ Lit w) of
+        NotParsed -> NotParsed
+        result@(Parsed (a,_) _ layer') ->
+          parseWord ws layer' (accIndex' a) result
+      where
+        accIndex' index = if isParsed acc then accIndex else index
     repeatPeg' peg max count layer lastResult
       | count >= max = (count, lastResult)
       | otherwise =
@@ -191,6 +203,8 @@ parse nonTerms word = parse' (0, B.length word)
               Terminal term ->
                 case term of
                   Lit w -> if x == w then Parsed (a,a) ast layer' else NotParsed
+                  LitWord ws -> parseWord ws layer a NotParsed
+                  LitBS ws -> parsePeg layer $ Terminal $ LitWord $ B.unpack ws
                   Digit -> if W.isDigit x then Parsed (a,a) ast layer'  else NotParsed
                   HexDigit ->
                     if W.isHexDigit x
@@ -221,9 +235,8 @@ parse nonTerms word = parse' (0, B.length word)
                     if Set.member x textSpecialsSet
                     then Parsed (a,a) ast layer'
                     else NotParsed
-                  _ -> error "not implemented"
               NT index -> usePegNT layer index
-              Sequence pegA pegB ->
+              Cons pegA pegB ->
                 case parsePeg layer pegA of
                   Parsed (beg1,end1) ast1 l ->
                     case parsePeg l pegB of
@@ -240,15 +253,39 @@ parse nonTerms word = parse' (0, B.length word)
         chr = if a < b
               then Parsed (a,a) (Chr $ B.singleton (B.index word a)) (parse' (a + 1,b))
               else NotParsed
-  
-main = do
-  -- let a = "(1+1)+(2*(2+1*(3*5+(9+1*(3*4*(1*3+(2+1*(1+6*(1*(1+(1*(2*3+(1+3*(3+3)))))))))))))))"
-  let a = "1+1)"
-  -- let a = "(0+1+2+3)"
+
+printResults nonTerms a = do
   let x = ans $ parse nonTerms a
   case x V.!? 0 of
     Just k ->
       case k of
-        Parsed range ast _ -> print ast
+        Parsed range ast _ -> do
+            P.putStrLn $ show a
+            P.putStrLn "== Range =="
+            P.putStrLn $ show range
+            P.putStrLn "== AST =="
+            P.putStrLn $ show ast
         other -> print other
     Nothing -> error "Impossible"
+
+dumbNT =
+  [ ("G", NonTerminal "A" # Terminal SP # NonTerminal "B")
+  , ("A", Terminal $ LitBS "hello")
+  , ("B", Terminal $ LitBS "friend")
+  ] :: [(RuleName,PEG)]
+
+nonTerms =
+  [ ("Add", Choice [NonTerminal "Mult" # Terminal (Lit W._plus) # NonTerminal "Add", NonTerminal "Mult"])
+  , ("Mult", Choice [NonTerminal "Prim" # Terminal (Lit W._asterisk) # NonTerminal "Mult", NonTerminal "Prim"])
+  , ("Prim", Choice [Terminal (Lit W._parenleft) # NonTerminal "Add" # Terminal (Lit W._parenright), NonTerminal "Dec"])
+  , ("Dec", Terminal Digit)
+  ] :: [(RuleName,PEG)]
+
+main = do
+  -- let a = "(1+1)+(2*(2+1*(3*5+(9+1*(3*4*(1*3+(2+1*(1+6*(1*(1+(1*(2*3+(1+3*(3+3)))))))))))))))"
+  let a = "1+1)"
+  -- let a = "(0+1+2+3)"
+  printResults nonTerms a
+
+  let b = "hello friend"
+  printResults dumbNT b
