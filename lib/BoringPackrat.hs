@@ -48,8 +48,8 @@ data Terminal'
   deriving (Show)
 
 specials
-  = [ W._braceleft    -- '('
-    , W._braceright   -- ')'
+  = [ W._parenleft    -- '('
+    , W._parenright   -- ')'
     , W._less         -- '<'
     , W._greater      -- '>'
     , W._bracketleft  -- '['
@@ -99,7 +99,14 @@ data Layer = Layer {
   char :: Result
 } deriving (Show)
 
-data AST = Seq AST AST | Rule ByteString AST | R Int AST | Chr ByteString | Void deriving (Show)
+data AST
+  = Cons' AST AST
+  | Seq [AST]
+  | Rule ByteString AST
+  | R Int AST
+  | Chr ByteString
+  | Void
+  deriving (Show)
 
 remapNT name2IndexMap peg =
   case peg of
@@ -109,7 +116,9 @@ remapNT name2IndexMap peg =
       case Map.lookup nonTermName name2IndexMap of
         Just index -> NT index
         Nothing -> error "Rule name not Expected"
-    Cons pegA pegB -> Cons (remapNT name2IndexMap pegA) (remapNT name2IndexMap pegB)
+    Cons pegA pegB ->
+        Cons (remapNT name2IndexMap pegA) (remapNT name2IndexMap pegB)
+    Sequence rules -> Sequence . fmap (remapNT name2IndexMap) $ rules
     other -> other
 
 isParsed (Parsed _ _ _) = True
@@ -122,7 +131,8 @@ parse nonTerms word = parse' (0, B.length word)
   where
     indexes = L.zipWith (\i (name,rule) -> (name,rule,i)) [0..] nonTerms
     name2IndexMap = Map.fromList $ fmap (\(name,_,i) -> (name,i)) indexes
-    nonTermsVec = V.fromList $ fmap (\(_,rule,_) -> remapNT name2IndexMap rule) indexes
+    nonTermsVec =
+      V.fromList $ fmap (\(_,rule,_) -> remapNT name2IndexMap rule) indexes
     indexToNameVec = V.fromList $ fmap (\(name,_,_) -> name) indexes
     parsePegNT = \layer index ->
       case nonTermsVec V.!? index of
@@ -132,6 +142,13 @@ parse nonTerms word = parse' (0, B.length word)
             NotParsed -> NotParsed
         Nothing -> NotParsed
     usePegNT layer index = (ans layer) V.! index
+    parseSequence baseIndex [] layer (asts,finalIndex) =
+      Parsed (baseIndex,finalIndex) (Seq $ P.reverse asts) layer
+    parseSequence baseIndex (peg:rs) layer (accAst,accIndex) =
+      case parsePeg layer peg of
+        result@(Parsed (a,b) ast layer') ->
+          parseSequence baseIndex rs layer' (ast:accAst,b)
+        NotParsed -> NotParsed
     parseWord [] layer accIndex acc =
       case acc of
         NotParsed -> NotParsed
@@ -180,6 +197,7 @@ parse nonTerms word = parse' (0, B.length word)
                 case parsePeg layer peg' of
                   NotParsed -> Parsed (a,a-1) ast layer 
                   _ -> NotParsed
+              -- TODO: correct the range
               Many' (min, maybeMax) peg' ->
                 case maybeMax of
                   Just max ->
@@ -205,7 +223,8 @@ parse nonTerms word = parse' (0, B.length word)
                   Lit w -> if x == w then Parsed (a,a) ast layer' else NotParsed
                   LitWord ws -> parseWord ws layer a NotParsed
                   LitBS ws -> parsePeg layer $ Terminal $ LitWord $ B.unpack ws
-                  Digit -> if W.isDigit x then Parsed (a,a) ast layer'  else NotParsed
+                  Digit ->
+                    if W.isDigit x then Parsed (a,a) ast layer'  else NotParsed
                   HexDigit ->
                     if W.isHexDigit x
                     then Parsed (a,a) ast layer'
@@ -240,10 +259,13 @@ parse nonTerms word = parse' (0, B.length word)
                 case parsePeg layer pegA of
                   Parsed (beg1,end1) ast1 l ->
                     case parsePeg l pegB of
-                      Parsed (beg2,end2) ast2 l' -> Parsed (beg1,end2) (Seq ast1 ast2) l'
+                      Parsed (beg2,end2) ast2 l' ->
+                        Parsed (beg1,end2) (Cons' ast1 ast2) l'
                       _ -> NotParsed
                   _ -> NotParsed
-              _ -> error "not implemented"
+              Sequence rules -> parseSequence a rules layer ([],a-1)
+              notImplemented ->
+                error $ "not implemented :: " ++ (show notImplemented)
           in
             result
     parse' (a,b) = layer
@@ -269,7 +291,7 @@ printResults nonTerms a = do
     Nothing -> error "Impossible"
 
 dumbNT =
-  [ ("G", NonTerminal "A" # Terminal SP # NonTerminal "B")
+  [ ("G", Sequence [NonTerminal "A", Terminal SP, NonTerminal "B"])
   , ("A", Terminal $ LitBS "hello")
   , ("B", Terminal $ LitBS "friend")
   ] :: [(RuleName,PEG)]
