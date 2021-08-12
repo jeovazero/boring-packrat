@@ -1,4 +1,16 @@
 {-# LANGUAGE OverloadedStrings #-}
+module BoringPackrat (
+  parse,
+  PEG(..),
+  (#),
+  AST(..),
+  Terminal'(..),
+  RuleName,
+  ParsedResult(..),
+  Result(..),
+  Layer(..)
+) where
+
 import Data.ByteString as B
 import Data.Word (Word8)
 import qualified Data.Map as Map
@@ -92,7 +104,9 @@ type RuleName = ByteString
 type NonTerminal' = (RuleName,PEG)
 type Range = (Int,Int)
 
-data Result = Parsed Range AST Layer | NotParsed deriving (Show)
+data Result = Parsed Range AST Layer | NoParse deriving (Show)
+
+data ParsedResult = AllParsed Result | PartialParsed Result | NotParsed
 
 data Layer = Layer {
   ans :: V.Vector Result,
@@ -126,8 +140,8 @@ isParsed _ = False
 
 substr (a,b) = B.take (b - a + 1) . B.drop a
 
-parse :: [NonTerminal'] -> ByteString -> Layer
-parse nonTerms word = parse' (0, B.length word)
+parsePEG :: [NonTerminal'] -> ByteString -> Layer
+parsePEG nonTerms word = parse' (0, B.length word)
   where
     indexes = L.zipWith (\i (name,rule) -> (name,rule,i)) [0..] nonTerms
     name2IndexMap = Map.fromList $ fmap (\(name,_,i) -> (name,i)) indexes
@@ -139,8 +153,8 @@ parse nonTerms word = parse' (0, B.length word)
         Just peg' ->
           case parsePeg layer peg' of
             Parsed r ast l -> Parsed r (Rule (indexToNameVec V.! index) ast) l
-            NotParsed -> NotParsed
-        Nothing -> NotParsed
+            other -> other
+        Nothing -> NoParse
     usePegNT layer index = (ans layer) V.! index
     parseSequence baseIndex [] layer (asts,finalIndex) =
       Parsed (baseIndex,finalIndex) (Seq $ P.reverse asts) layer
@@ -148,18 +162,18 @@ parse nonTerms word = parse' (0, B.length word)
       case parsePeg layer peg of
         result@(Parsed (a,b) ast layer') ->
           parseSequence baseIndex rs layer' (ast:accAst,b)
-        NotParsed -> NotParsed
+        other -> other
     parseWord [] layer accIndex acc =
       case acc of
-        NotParsed -> NotParsed
         Parsed (_,b) _ layer' ->
           Parsed range (Chr $ substr range word) layer'
             where range = (accIndex,b)
+        other -> other
     parseWord (w:ws) layer accIndex acc =
       case parsePeg layer (Terminal $ Lit w) of
-        NotParsed -> NotParsed
         result@(Parsed (a,_) _ layer') ->
           parseWord ws layer' (accIndex' a) result
+        other -> other
       where
         accIndex' index = if isParsed acc then accIndex else index
     repeatPeg' peg max count layer lastResult
@@ -168,15 +182,14 @@ parse nonTerms word = parse' (0, B.length word)
           case parsePeg layer peg of
             result@(Parsed (a,b) ast layer') ->
               repeatPeg' peg max (count + 1) layer' result
-            NotParsed -> (count,lastResult)
+            NoParse -> (count,lastResult)
     repeatPeg peg count layer lastResult =
       case parsePeg layer peg of
         result@(Parsed (a,b) ast layer') ->
           repeatPeg peg (count + 1) layer' result
-        NotParsed -> (count, lastResult)
+        NoParse -> (count, lastResult)
     parsePeg layer peg =
       case char layer of
-        NotParsed -> NotParsed
         Parsed (a,_) ast layer' ->
           let
             x = B.index word a
@@ -184,59 +197,59 @@ parse nonTerms word = parse' (0, B.length word)
               Choice pegs ->
                 case L.find isParsed $ fmap (parsePeg layer) pegs of
                   Just parsed -> parsed
-                  Nothing -> NotParsed
+                  Nothing -> NoParse
               Optional peg' ->
                 case parsePeg layer peg' of
-                  NotParsed -> Parsed (a,a-1) ast layer
+                  NoParse -> Parsed (a,a-1) ast layer
                   result -> result
               And peg' ->
                 case parsePeg layer peg' of
-                  NotParsed -> NotParsed
-                  _ -> Parsed (a,a-1) ast layer 
+                  Parsed _ _ _ -> Parsed (a,a-1) ast layer 
+                  other -> other
               Not peg' ->
                 case parsePeg layer peg' of
-                  NotParsed -> Parsed (a,a-1) ast layer 
-                  _ -> NotParsed
+                  NoParse -> Parsed (a,a-1) ast layer 
+                  _ -> NoParse
               -- TODO: correct the range
               Many' (min, maybeMax) peg' ->
                 case maybeMax of
                   Just max ->
                     let
-                      (count, result) = repeatPeg' peg' max 0 layer NotParsed
+                      (count, result) = repeatPeg' peg' max 0 layer NoParse
                     in
                       if min <= count && count <= max 
                       then result
-                      else NotParsed
+                      else NoParse
                   Nothing ->
                     let
-                      (count, result) = repeatPeg peg' 0 layer NotParsed
+                      (count, result) = repeatPeg peg' 0 layer NoParse
                     in
                       if min <= count
                       then result
-                      else NotParsed
+                      else NoParse
               Many0 peg' -> parsePeg layer $ Many' (0, Nothing) peg'
               Many1 peg' -> parsePeg layer $ Many' (1, Nothing) peg'
               ManyN n peg' -> parsePeg layer $ Many' (n, Nothing) peg'
               Many (min,max) peg' -> parsePeg layer $ Many' (min, Just max) peg'
               Terminal term ->
                 case term of
-                  Lit w -> if x == w then Parsed (a,a) ast layer' else NotParsed
-                  LitWord ws -> parseWord ws layer a NotParsed
+                  Lit w -> if x == w then Parsed (a,a) ast layer' else NoParse
+                  LitWord ws -> parseWord ws layer a NoParse
                   LitBS ws -> parsePeg layer $ Terminal $ LitWord $ B.unpack ws
                   Digit ->
-                    if W.isDigit x then Parsed (a,a) ast layer'  else NotParsed
+                    if W.isDigit x then Parsed (a,a) ast layer'  else NoParse
                   HexDigit ->
                     if W.isHexDigit x
                     then Parsed (a,a) ast layer'
-                    else NotParsed
+                    else NoParse
                   Alpha ->
                     if W.isAlpha x
                     then Parsed (a,a) ast layer'
-                    else NotParsed
+                    else NoParse
                   AlphaDigit ->
                     if W.isAlphaNum x
                     then Parsed (a,a) ast layer'
-                    else NotParsed
+                    else NoParse
                   CR -> parsePeg layer $ Terminal $ Lit W._cr
                   LF -> parsePeg layer $ Terminal $ Lit W._lf
                   Dquote -> parsePeg layer $ Terminal $ Lit W._quotedbl
@@ -245,15 +258,15 @@ parse nonTerms word = parse' (0, B.length word)
                   Range (from,to) -> 
                     if x >= from && x <= to
                     then Parsed (a,a) ast layer'
-                    else NotParsed
+                    else NoParse
                   Specials ->
                     if Set.member x specialsSet
                     then Parsed (a,a) ast layer'
-                    else NotParsed
+                    else NoParse
                   TextSpecials ->
                     if Set.member x textSpecialsSet
                     then Parsed (a,a) ast layer'
-                    else NotParsed
+                    else NoParse
               NT index -> usePegNT layer index
               Cons pegA pegB ->
                 case parsePeg layer pegA of
@@ -261,53 +274,32 @@ parse nonTerms word = parse' (0, B.length word)
                     case parsePeg l pegB of
                       Parsed (beg2,end2) ast2 l' ->
                         Parsed (beg1,end2) (Cons' ast1 ast2) l'
-                      _ -> NotParsed
-                  _ -> NotParsed
+                      _ -> NoParse
+                  _ -> NoParse
               Sequence rules -> parseSequence a rules layer ([],a-1)
               notImplemented ->
                 error $ "not implemented :: " ++ (show notImplemented)
           in
             result
+        other -> other
     parse' (a,b) = layer
       where
         layer = Layer ans' chr
         ans' = V.imap (\i _ -> parsePegNT layer i) nonTermsVec
         chr = if a < b
               then Parsed (a,a) (Chr $ B.singleton (B.index word a)) (parse' (a + 1,b))
-              else NotParsed
+              else NoParse
 
-printResults nonTerms a = do
-  let x = ans $ parse nonTerms a
-  case x V.!? 0 of
+parse :: [NonTerminal'] -> ByteString -> ParsedResult
+parse nonTerms input =
+  case result V.!? 0 of
     Just k ->
       case k of
-        Parsed range ast _ -> do
-            P.putStrLn $ show a
-            P.putStrLn "== Range =="
-            P.putStrLn $ show range
-            P.putStrLn "== AST =="
-            P.putStrLn $ show ast
-        other -> print other
-    Nothing -> error "Impossible"
-
-dumbNT =
-  [ ("G", Sequence [NonTerminal "A", Terminal SP, NonTerminal "B"])
-  , ("A", Terminal $ LitBS "hello")
-  , ("B", Terminal $ LitBS "friend")
-  ] :: [(RuleName,PEG)]
-
-nonTerms =
-  [ ("Add", Choice [NonTerminal "Mult" # Terminal (Lit W._plus) # NonTerminal "Add", NonTerminal "Mult"])
-  , ("Mult", Choice [NonTerminal "Prim" # Terminal (Lit W._asterisk) # NonTerminal "Mult", NonTerminal "Prim"])
-  , ("Prim", Choice [Terminal (Lit W._parenleft) # NonTerminal "Add" # Terminal (Lit W._parenright), NonTerminal "Dec"])
-  , ("Dec", Terminal Digit)
-  ] :: [(RuleName,PEG)]
-
-main = do
-  -- let a = "(1+1)+(2*(2+1*(3*5+(9+1*(3*4*(1*3+(2+1*(1+6*(1*(1+(1*(2*3+(1+3*(3+3)))))))))))))))"
-  let a = "1+1)"
-  -- let a = "(0+1+2+3)"
-  printResults nonTerms a
-
-  let b = "hello friend"
-  printResults dumbNT b
+        result@(Parsed (_,end) _ _) ->
+          if end == B.length input - 1
+          then AllParsed result
+          else PartialParsed result
+        other -> NotParsed
+    Nothing -> error "Trying to access an empty vector"
+  where
+    result = ans $ parsePEG nonTerms input
