@@ -10,7 +10,10 @@ module BoringPackrat (
   Result(..),
   Layer(..),
   substr,
-  prettyPrint
+  prettyPrint,
+  isAllParsed,
+  isPartialParsed,
+  isNotParsed
 ) where
 
 import Data.ByteString as B
@@ -109,12 +112,19 @@ type Range = (Int,Int)
 
 data Result = Parsed Range AST Layer | NoParse Int [ByteString] deriving (Show)
 
-data ParsedResult = AllParsed Result | PartialParsed Result | NotParsed Int [ByteString]
+data ParsedResult
+  = AllParsed Result
+  | PartialParsed Result
+  | NotParsed Int [ByteString]
+  deriving (Show)
 
 data Layer = Layer {
   ans :: V.Vector Result,
   char :: Result
-} deriving (Show)
+}
+
+instance Show Layer where
+  show layer = "Layer [...]"
 
 data AST
   = Cons' Range AST AST
@@ -122,7 +132,16 @@ data AST
   | Rule Range ByteString AST
   | Str ByteString
   | Void
-  deriving (Show)
+  deriving (Show,Eq)
+
+isAllParsed (AllParsed _) = True
+isAllParsed _ = False
+
+isPartialParsed (PartialParsed _) = True
+isPartialParsed _ = False
+
+isNotParsed (NotParsed _ _) = True
+isNotParsed _ = False
 
 applyIdent ident = B8.putStr $ B8.replicate ident ' '
 
@@ -225,7 +244,7 @@ parsePEG nonTerms word = (parse' (0, B.length word),name2IndexMap)
         Just peg' ->
           case parsePeg layer peg' of
             Parsed r ast l -> Parsed r (Rule r (indexToNameVec V.! index) ast) l
-            NoParse i list -> NoParse index (B.concat ["Rule ",indexToNameVec V.! index]:list)
+            NoParse i list -> NoParse i (B.concat ["Rule ",indexToNameVec V.! index]:list)
         Nothing -> NoParse index [indexToNameVec V.! index]
     usePegNT layer index = (ans layer) V.! index
     parseSequence baseIndex [] layer (asts,finalIndex) =
@@ -302,20 +321,27 @@ parsePEG nonTerms word = (parse' (0, B.length word),name2IndexMap)
                       in
                         if min <= count && count <= max 
                         then manyResult a result
-                        else NoParse a ["Many"]
+                        else case manyResult a result of
+                          NoParse i _ -> NoParse i ["Many"]
+                          Parsed (_,b) _ _ -> NoParse (b + 1) ["Many"]
                     Nothing ->
                       let
                         (count, result) = repeatPeg peg' 0 layer (NoParse a ["Many"])
+                        cursorIndex =
+                          case result of
+                            NoParse i _ -> i
+                            Parsed (_,b) _ _ -> b + 1
                       in 
                         if min <= count
                         then
                           case manyResult a result of
-                            NoParse _ errors -> if min == 0 then Parsed (a,a-1) Void layer else NoParse a ("Many":errors)
+                            NoParse _ errors -> if min == 0 then Parsed (a,a-1) Void layer else NoParse (a + count) ("Many":errors)
                             result -> result
-                        else NoParse a (extractErrors result)
+                        else NoParse cursorIndex (extractErrors result)
               Many0 peg' -> parsePeg layer $ Many' (0, Nothing) peg'
               Many1 peg' -> parsePeg layer $ Many' (1, Nothing) peg'
               ManyN n peg' -> parsePeg layer $ Many' (n, Nothing) peg'
+              Repeat n peg' -> parsePeg layer $ Many' (n, Just n) peg'
               Many (min,max) peg' -> parsePeg layer $ Many' (min, Just max) peg'
               Terminal term ->
                 if isVoid ast then NoParse a ["Terminal","Void"]
@@ -367,7 +393,7 @@ parsePEG nonTerms word = (parse' (0, B.length word),name2IndexMap)
                   other -> other
               Sequence rules -> parseSequence a rules layer ([],a-1)
               notImplemented ->
-                error $ "not implemented :: " ++ (show notImplemented)
+                error $ "Not implemented => " ++ (show notImplemented)
           in
             result
         other -> other
