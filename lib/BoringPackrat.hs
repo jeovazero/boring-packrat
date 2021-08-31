@@ -9,6 +9,7 @@ module BoringPackrat (
   ParsedResult(..),
   Result(..),
   Layer(..),
+  astFrom,
   substr,
   prettyPrint,
   isAllParsed,
@@ -133,6 +134,10 @@ data AST
   | Str ByteString
   | Void
   deriving (Show,Eq)
+
+astFrom (PartialParsed (Parsed _ ast _)) = Just ast
+astFrom (AllParsed (Parsed _ ast _)) = Just ast
+astFrom _ = Nothing
 
 isAllParsed (AllParsed _) = True
 isAllParsed _ = False
