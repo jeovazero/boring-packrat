@@ -1,40 +1,24 @@
 {-# LANGUAGE OverloadedStrings #-}
-module BoringPackrat.EmailSpec (emailSpec) where
+module BoringPackrat.EmailGrammar (emailGrammar) where
 
 import BoringPackrat (Terminal'(..), PEG(..), (#), RuleName)
-import qualified Data.Word8 as W
+import qualified Data.ByteString as B
+import BoringPackrat.Terminals
+
+n,w :: B.ByteString -> PEG
+n = NonTerminal
+w = Terminal . LitBS
 
 --
 -- https://www.rfc-editor.org/rfc/pdfrfc/rfc5321.txt.pdf
 --
 -- EMAIL SPEC
 --
+--
 
-lt = Terminal . Lit
-n = NonTerminal
-w = Terminal . LitBS
-range = Terminal . Range
-
-_WSP = Choice [Terminal SP, Terminal Tab]
-_CRLF = Terminal CR # Terminal LF
-_VCHAR = range (0x21, 0x73) -- visible (printing) characters
-_At = lt W._at -- '@'
-_Dot = lt W._period -- '.'
-_Hyphen = lt W._hyphen
-_Digit = Terminal Digit
-_AlphaDigit = Terminal AlphaDigit
-_HexDigit = Terminal HexDigit
-_BracketLeft = lt W._bracketleft
-_BracketRight = lt W._bracketright
-_BraceLeft = lt W._braceleft
-_BraceRight = lt W._braceright
-_Colon = lt W._colon
-_TextSpecials = Terminal TextSpecials
-_Dquote = Terminal Dquote
-_Backslash = lt W._backslash
-
--- Local-part "@" ( Domain / address-literal )
-emailSpec
+emailGrammar :: [(RuleName,PEG)]
+emailGrammar
+    -- Local-part "@" ( Domain / address-literal )
   = [ ("Email", Sequence [n"LocalPart", _At, Choice [n"Domain", n"AddressLiteral"]])
     -- Dot-string / Quoted-string
   , ("LocalPart", Choice [n"DotString", n"QuotedString"])
@@ -54,7 +38,7 @@ emailSpec
   , ("IPV6AddressLiteral", w"IPv6:" # n"IPv6Addr")
     -- Standardized-tag ":" 1*dcontent
   , ("GeneralAddresLiteral", n"StandardizedTag" # _Colon # Many1 (n"Dcontent"))
-    -- *(ALPHA / DIGIT / "-") (ALPHA / DIGIT)
+    -- 0*(ALPHA / DIGIT / "-") (ALPHA / DIGIT)
   , ("StandardizedTag", Many1 (Many0 _Hyphen # _AlphaDigit))
     -- Printable US-ASCII, excl. "[", "\", "]"
   , ("Dcontent", Choice [range (33,90), range (94,126)])
@@ -79,7 +63,7 @@ emailSpec
   , ("IPv6v4Full"
     , n"IPv6Hex" # Repeat 5 (_Colon # n"IPv6Hex")
     # _Colon
-    # (n"IPV4AddessLiteral")
+    # n"IPV4AddessLiteral"
     )
     -- Atom *("."  Atom)
   , ("DotString", n"Atom" # Many0 (_Dot # n"Atom"))
@@ -98,7 +82,7 @@ emailSpec
     -- [CFWS] dot-atom-text [CFWS]
   , ("DotAtom"
     , Optional (n"CFWS")
-    # (n"DotAtomText")
+    # n"DotAtomText"
     # Optional (n"CFWS")
     )
     -- 1*atext *("." 1*atext)
@@ -122,7 +106,7 @@ emailSpec
     -- double-quote and the backslash itself. 
   , ("QtextSMTP", Choice [range (32,33), range (35,91), range (93, 126)])
     -- Printable ascii, not '\' '"'
-  , ("Qtext", Choice [lt 33, range (35, 91), range (93, 126)])
+  , ("Qtext", Choice [lit 33, range (35, 91), range (93, 126)])
     -- "\" (VCHAR / WSP)
   , ("QuotedPair", _Backslash # Choice [_VCHAR,_WSP])
     -- [CFWS] "[" *([FWS] dtext) [FWS] "]" [CFWS]
@@ -151,4 +135,4 @@ emailSpec
   , ("Ccontent", Choice [n"Ctext", n"QuotedPair", n"Comment"])
     -- printable ascii, not '(' ')' '\'
   , ("Ctext", Choice [range (33,39), range(42, 91), range (93, 126)])
-  ] :: [(RuleName,PEG)]
+  ] 
