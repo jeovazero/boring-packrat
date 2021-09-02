@@ -27,20 +27,6 @@ library
 
   ghc-options:         -Wall
 
-executable boring-packrat
-  main-is:             Main.hs
-  -- other-modules:
-  -- other-extensions:
-  build-depends:       base,
-                       boring-packrat,
-                       bytestring,
-                       word8,
-                       containers,
-                       vector
-  -- hs-source-dirs:
-  ghc-options:         -fwarn-incomplete-patterns -fwarn-incomplete-uni-patterns
-  default-language:    Haskell2010
-
 test-suite spec
   type:               exitcode-stdio-1.0
   main-is:            Spec.hs
