@@ -1,41 +1,26 @@
 {-# Language OverloadedStrings #-}
 import Test.Hspec
-import Data.Word8 as W
 import Data.ByteString
+import BoringPackrat.Terminals
 import BoringPackrat (
     parse,
-    substr,
     isNotParsed,
     isAllParsed,
     isPartialParsed,
     AST(..),
-    Terminal'(..),
     PEG(..),
+    Grammar,
     (#),
-    RuleName,
     ParsedResult(..),
     Result(..),
-    Layer(..)
   )
 
-n = NonTerminal
-
-_WSP = Choice [Terminal SP, Terminal Tab]
-_CRLF = Terminal CR # Terminal LF
-_Digit = Terminal Digit
-_Alpha = Terminal Alpha
-_AlphaDigit = Terminal AlphaDigit
-_HexDigit = Terminal HexDigit
-_LitBS = Terminal . LitBS
-
-rangeFrom (PartialParsed (Parsed r _ _)) = r
-rangeFrom (AllParsed (Parsed r _ _)) = r
-rangeFrom _ = error "Not expect range from NotParsed"
-
+astFrom :: ParsedResult -> AST
 astFrom (PartialParsed (Parsed _ ast _)) = ast
 astFrom (AllParsed (Parsed _ ast _)) = ast
 astFrom _ = error "Not expect AST from NotParsed"
 
+errorIndexFrom :: ParsedResult -> Int
 errorIndexFrom (NotParsed i _) = i
 errorIndexFrom _ = error "Not expect error index from Parsed"
 {-
@@ -46,18 +31,20 @@ errorIndexFrom _ = error "Not expect error index from Parsed"
 
 -}
 
+parse' :: Grammar -> ByteString -> ParsedResult
 parse' grammar = parse grammar "Grammar"
 
+main :: IO ()
 main = hspec $ do
   describe "Many0 ::" $ do
     it "Many0 LitBS \"abc\" == 'abcabcabc'" $ do
-      let result = parse' [("Grammar", Many0 $ _LitBS "abc")] "abcabcabc"
+      let result = parse' [("Grammar", Many0 $ litBS "abc")] "abcabcabc"
       
       result `shouldSatisfy` isAllParsed
       astFrom result `shouldBe` Rule (0,8) "Grammar" (Str "abcabcabc")
 
     it "Many0 LitBS \"abc\" /= 'ABDabc'" $ do
-      let result = parse' [("Grammar", Many0 $ _LitBS "abc")] "ABDabc"
+      let result = parse' [("Grammar", Many0 $ litBS "abc")] "ABDabc"
       
       result `shouldSatisfy` isPartialParsed
       astFrom result `shouldBe` Rule (0,-1) "Grammar" Void
@@ -113,13 +100,13 @@ main = hspec $ do
 
   describe "ManyN ::" $ do
     it "ManyN 2 (LitBS \"hi\") ~= 'hihi-mister'" $ do
-      let result = parse' [("Grammar", ManyN 2 $ _LitBS "hi")] "hihi-mister"
+      let result = parse' [("Grammar", ManyN 2 $ litBS "hi")] "hihi-mister"
       
       result `shouldSatisfy` isPartialParsed
       astFrom result `shouldBe` Rule (0,3) "Grammar" (Str "hihi")
    
     it "ManyN 3 (LitBS \"hi\") /= 'hihi-mister'" $ do
-      let result = parse' [("Grammar", ManyN 3 $ _LitBS "hi")] "hihi-mister"
+      let result = parse' [("Grammar", ManyN 3 $ litBS "hi")] "hihi-mister"
       
       result `shouldSatisfy` isNotParsed
       errorIndexFrom result `shouldBe` 4
