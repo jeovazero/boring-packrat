@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module BoringPackrat.EmailGrammar (emailGrammar) where
 
-import BoringPackrat (Terminal'(..), PEG(..), (#), RuleName)
+import BoringPackrat (Terminal'(..), PEG(..), (#), Grammar)
 import qualified Data.ByteString as B
 import BoringPackrat.Terminals
 
@@ -16,7 +16,7 @@ w = Terminal . LitBS
 --
 --
 
-emailGrammar :: [(RuleName,PEG)]
+emailGrammar ::Grammar
 emailGrammar
     -- Local-part "@" ( Domain / address-literal )
   = [ ("Email", Sequence [n"LocalPart", _At, Choice [n"Domain", n"AddressLiteral"]])

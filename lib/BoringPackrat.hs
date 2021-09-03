@@ -1,20 +1,23 @@
 {-# LANGUAGE OverloadedStrings #-}
 module BoringPackrat (
-  parse,
-  PEG(..),
-  (#),
   AST(..),
-  Terminal'(..),
-  RuleName,
-  ParsedResult(..),
-  Result(..),
-  Layer(..),
   astFrom,
-  substr,
-  prettyPrint,
+  Grammar,
+  GrammarRule,
   isAllParsed,
+  isNotParsed,
   isPartialParsed,
-  isNotParsed
+  Layer(..),
+  parse,
+  ParsedResult(..),
+  PEG(..),
+  prettyPrint,
+  Range,
+  Result(..),
+  RuleName,
+  substr,
+  Terminal'(..),
+  (#)
 ) where
 
 import qualified Data.ByteString as B
@@ -110,7 +113,8 @@ specialsSet = Set.fromList specials
 textSpecialsSet = Set.fromList textSpecials
 
 type RuleName = B.ByteString
-type NonTerminal' = (RuleName,PEG)
+type GrammarRule = (RuleName,PEG)
+type Grammar = [GrammarRule]
 type Range = (Int,Int)
 
 data Result
@@ -250,7 +254,7 @@ isVoidLayer layer =
 substr :: (Int,Int) -> B.ByteString -> B.ByteString
 substr (a,b) = B.take (b - a + 1) . B.drop a
 
-parsePEG :: [NonTerminal'] -> B.ByteString -> (Layer, Map.Map B.ByteString Int)
+parsePEG :: Grammar -> B.ByteString -> (Layer, Map.Map B.ByteString Int)
 parsePEG nonTerms word = (parse' (0, B.length word),name2IndexMap)
   where
     indexes = L.zipWith (\i (name,rule) -> (name,rule,i)) [0..] nonTerms
@@ -445,7 +449,7 @@ parsePEG nonTerms word = (parse' (0, B.length word),name2IndexMap)
                 then Parsed (a,a) Void (parse' (a + 1,b))
                 else NoParse a [] 
 
-parse :: [NonTerminal'] -> RuleName -> B.ByteString -> ParsedResult
+parse :: Grammar -> RuleName -> B.ByteString -> ParsedResult
 parse nonTerms rulename input =
   case result of
     Just k ->

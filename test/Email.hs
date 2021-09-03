@@ -6,12 +6,12 @@ import BoringPackrat (
 --  prettyPrint,
     isAllParsed,
     PEG(..),
+    Grammar,
     ParsedResult(..),
-    RuleName,
   )
 import BoringPackrat.EmailGrammar (emailGrammar)
 
-parse' :: [(RuleName,PEG)] -> ByteString -> ParsedResult
+parse' :: Grammar -> ByteString -> ParsedResult
 parse' grammar = parse grammar "Email"
 
 -- Email addresses from https://en.wikipedia.org/wiki/Email_address
