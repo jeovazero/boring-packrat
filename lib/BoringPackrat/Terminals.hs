@@ -2,14 +2,18 @@ module BoringPackrat.Terminals where
 
 import BoringPackrat (Terminal'(..), PEG(..), (#))
 import qualified Data.Word8 as W
+import qualified Data.ByteString as B
 
 lit :: W.Word8 -> PEG
 lit = Terminal . Lit
 
+litBS :: B.ByteString -> PEG
+litBS = Terminal . LitBS
+
 range :: (W.Word8,W.Word8) -> PEG
 range = Terminal . Range
 
-_WSP,_CRLF,_VCHAR,_At,_Dot,_Hyphen,_Digit,_AlphaDigit,_HexDigit :: PEG
+_WSP,_CRLF,_VCHAR,_At,_Dot,_Hyphen,_Digit,_Alpha,_AlphaDigit,_HexDigit :: PEG
 _BracketLeft,_BracketRight,_BraceLeft,_BraceRight,_Colon,_TextSpecials :: PEG
 _Dquote,_Backslash :: PEG
 
@@ -19,6 +23,7 @@ _VCHAR = range (0x21, 0x73) -- visible (printing) characters
 _At = lit W._at -- '@'
 _Dot = lit W._period -- '.'
 _Hyphen = lit W._hyphen
+_Alpha = Terminal Alpha
 _Digit = Terminal Digit
 _AlphaDigit = Terminal AlphaDigit
 _HexDigit = Terminal HexDigit
