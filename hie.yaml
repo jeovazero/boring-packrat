@@ -1,7 +1,5 @@
 cradle:
   cabal:
-    - path: "./"
-      component: "exe:boring-packrat"
     - path: "./lib"
       component: "lib:boring-packrat"
     - path: "./test"
