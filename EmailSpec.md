@@ -6,6 +6,20 @@ From [RFC 5321](https://www.rfc-editor.org/rfc/pdfrfc/rfc5321.txt.pdf)
 Mailbox = Local-part "@" ( Domain / address-literal )
 ```
 
+Limits:
+
+    The maximum total length of a user name or other local-part is 64 octets.
+
+    The maximum total length of a reverse-path or forward-path is 256 octets
+    (including the punctuation and element separators).
+    
+    Forward-path = Path
+    Path         = "<" [ A-d-l ":" ] Mailbox ">"
+    
+    The forward-path will contain at least a pair of angle brackets in
+    addition to the Mailbox. This limits the Mailbox to 254 characters. 
+
+
 #### Local-part
 
 ```
