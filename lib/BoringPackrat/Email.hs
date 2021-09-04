@@ -16,7 +16,6 @@ import BoringPackrat (
 import qualified Data.ByteString.Char8 as B8
 import BoringPackrat.Terminals
 import Data.Maybe
-import Debug.Trace
 
 data Email = Email B8.ByteString B8.ByteString deriving (Show,Eq)
 
