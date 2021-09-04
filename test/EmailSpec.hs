@@ -1,4 +1,6 @@
 {-# Language OverloadedStrings #-}
+module EmailSpec where
+
 import Test.Hspec
 import Data.ByteString.Char8 as B8
 import BoringPackrat.Email (checkEmail,parseEmail)
@@ -39,12 +41,13 @@ invalids =
   , "QA[icon]CHOCOLATE[icon]@test.com"
   ]
 
-main :: IO ()
-main = hspec $ do
+spec :: Spec
+spec = do
   describe "Valid Emails" $
    mapM_ (
       \valid ->
         it (B8.unpack valid) $ do
+          B8.putStr "    "
           print $ parseEmail valid
           valid `shouldSatisfy` checkEmail 
     ) valids
