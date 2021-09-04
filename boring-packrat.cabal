@@ -18,7 +18,8 @@ library
   hs-source-dirs:      lib
   exposed-modules:     BoringPackrat,
                        BoringPackrat.Email,
-                       BoringPackrat.Terminals
+                       BoringPackrat.Terminals,
+                       BoringPackrat.PrettyPrint
   build-depends:       base,
                        bytestring,
                        word8,
