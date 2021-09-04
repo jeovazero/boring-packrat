@@ -1,20 +1,89 @@
 {-# LANGUAGE OverloadedStrings #-}
-module BoringPackrat.EmailGrammar (emailGrammar) where
+module BoringPackrat.Email (emailGrammar,parseEmail,checkEmail,emailAddress) where
 
-import BoringPackrat (Terminal'(..), PEG(..), (#), Grammar)
-import qualified Data.ByteString as B
+import BoringPackrat (
+    Terminal'(..),
+    PEG(..),
+    (#),
+    Grammar,
+    ParsedResult,
+    parse,
+    astFrom,
+    AST(..),
+    isAllParsed,
+    substr
+  )
+import qualified Data.ByteString.Char8 as B8
 import BoringPackrat.Terminals
+import Data.Maybe
+import Debug.Trace
 
-n,w :: B.ByteString -> PEG
-n = NonTerminal
-w = Terminal . LitBS
+data Email = Email B8.ByteString B8.ByteString deriving (Show,Eq)
+
+emailAddress :: Email -> B8.ByteString
+emailAddress (Email localPart domain) = B8.concat [localPart,"@",domain]
+
+emailFrom :: B8.ByteString -> AST -> Maybe Email
+emailFrom input ast =
+  case ast of
+    Rule _ "Email" (Seq _ [Rule rangeL _ _,_,Rule rangeD _ _]) -> 
+        let
+          localPart = substr rangeL input 
+          domain = substr rangeD input
+        in
+          Just (Email localPart domain)
+    _ -> Nothing
+
+validateLength :: Email -> Bool
+validateLength (Email localPart domain) =
+  -- localPart "@" domain
+  let
+    -- The maximum total length of a user name or other local-part is 64
+    -- octets.
+    localPartLen = B8.length localPart
+    localPartCond = localPartLen <= 64
+
+    domainLen = B8.length domain
+    -- The maximum total length of a reverse-path or forward-path is 256
+    -- octets (including the punctuation and element separators).
+    --
+    -- Forward-path = Path
+    -- Path         = "<" [ A-d-l ":" ] Mailbox ">"
+    --
+    -- The forward-path will contain at least a pair of angle brackets in
+    -- addition to the Mailbox. This limits the Mailbox to 254 characters. 
+    pathCond = localPartLen + domainLen + 1 <= 254 
+  in
+    localPartCond && pathCond
+
+
+parseEmail :: B8.ByteString -> Maybe Email
+parseEmail input =
+  let
+    result = parseEmail' input
+    maybeAst = if isAllParsed result then astFrom result else Nothing
+    maybeEmail = maybe Nothing (emailFrom input) maybeAst
+    lengthCond = maybe False validateLength maybeEmail
+  in
+    if lengthCond then maybeEmail else Nothing
+
+checkEmail :: B8.ByteString -> Bool
+checkEmail input = isJust $ parseEmail input
+
+parseEmail' :: B8.ByteString -> ParsedResult
+parseEmail' = parse emailGrammar "Email"
 
 --
 -- https://www.rfc-editor.org/rfc/pdfrfc/rfc5321.txt.pdf
 --
--- EMAIL SPEC
+-- EMAIL GRAMMAR from RFC 5321
 --
 --
+
+n,w :: B8.ByteString -> PEG
+n = NonTerminal
+w = Terminal . LitBS
+
 
 emailGrammar ::Grammar
 emailGrammar
