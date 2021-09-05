@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build_and_test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-haskell@v1
+        id: setup-haskell
+        with:
+          ghc-version: '8.10.4'
+          cabal-version: '3.2.0.0'
+      - name: Freeze
+        run: cabal v2-freeze
+      - name: Cabal cache
+        uses: actions/cache@v2
+        with:
+          path: |
+            ${{ steps.setup-haskell.outputs.cabal-store }}
+            dist-newstyle
+          key: ghc8104-gnulinux-${{ hashFiles('cabal.project.freeze') }}
+      - name: Build the project
+        run: |
+          cabal v2-build
+      - name: Run the tests
+        run: |
+          cabal v2-test
+
