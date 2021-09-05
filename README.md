@@ -1,9 +1,22 @@
-## Example
+## Boring Packrat
 
-Toy-Grammar
+A packrat parser using Boring Haskell.
 
-```
-Expr    <-  Add | Addend
+The initial objective of the project was to make an email validator to use in another project,
+but it would very easy just use a library from Hackage, so why not make a parser for fun?
+
+### Examples
+
+#### Email
+
+The email grammar was based on [RFC 5321](https://www.rfc-editor.org/rfc/pdfrfc/rfc5321.txt.pdf).
+
+[Check out the grammar here](https://github.com/jeovazero/boring-packrat/blob/main/lib/BoringPackrat/Email.hs#L88)
+
+#### Toy-Grammar
+
+```bnf
+Expr    <- Add | Addend
 Add     <- Addend "+" Expr
 Addend  <- Mult | Factor
 Mult    <- Factor "*" Addend
@@ -16,13 +29,13 @@ Decimal <- [0-9]+
 {-# LANGUAGE OverloadedStrings #-}
 import BoringPackrat (
     parse,
-    prettyPrint,
     astFrom,
     AST(..),
     Terminal'(..),
     PEG(..),
-    RuleName,
+    Grammar
   )
+import BoringPackrat.PrettyPrint (prettyPrint)
 import qualified Data.Word8 as W
 import qualified Data.ByteString.Char8 as B8
 import Data.Maybe (fromJust)
@@ -33,6 +46,7 @@ _ParenRight = Terminal $ Lit W._parenright -- ')'
 _Times      = Terminal $ Lit W._asterisk   -- '*'
 _Plus       = Terminal $ Lit W._plus       -- '+'
 
+grammar :: Grammar
 grammar =
   [ ("Expr", Choice [n"Add",n"Addend"])
   , ("Add", Sequence [n"Addend",_Plus,n"Expr"])
@@ -49,6 +63,7 @@ data Expr
     | Decimal Int
     deriving (Show)
 
+transformAST :: AST -> Expr
 transformAST ast =
   case ast of
     Rule _ "Add" (Seq _ [a,_,b]) ->
@@ -68,7 +83,7 @@ main = do
   let ast = fromJust $ astFrom result
 
   prettyPrint input ast
-  print $ transformAst ast
+  print $ transformAST ast
 ```
 
 Output:
@@ -103,3 +118,5 @@ Rule Expr -> (0,6) -> "(1+2)*3"
               Str "3"
 Mult (Add (Decimal 1) (Decimal 2)) (Decimal 3)
 ```
+
+> a boring haskell project by jeovazero :pensive:

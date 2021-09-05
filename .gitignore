@@ -2,3 +2,5 @@ result
 *.hi
 *.o
 dist-newstyle
+.direnv
+.envrc
