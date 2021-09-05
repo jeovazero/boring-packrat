@@ -3,7 +3,7 @@
 A packrat parser using Boring Haskell.
 
 The initial objective of the project was to make an email validator to use in another project,
-but it would very easy just use a library from Hackage, so why not make a parser for fun?
+but it would be very easy just use a library from Hackage, so why not make a parser for fun?
 
 ### Examples
 
