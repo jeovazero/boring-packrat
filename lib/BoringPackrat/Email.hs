@@ -10,7 +10,7 @@ import BoringPackrat (
     parse,
     astFrom,
     AST(..),
-    isAllParsed,
+    isTotallyConsumed,
     substr
   )
 import qualified Data.ByteString.Char8 as B8
@@ -55,12 +55,11 @@ validateLength (Email localPart domain) =
   in
     localPartCond && pathCond
 
-
 parseEmail :: B8.ByteString -> Maybe Email
 parseEmail input =
   let
     result = parseEmail' input
-    maybeAst = if isAllParsed result then astFrom result else Nothing
+    maybeAst = if isTotallyConsumed result then astFrom result else Nothing
     maybeEmail = maybe Nothing (emailFrom input) maybeAst
     lengthCond = maybe False validateLength maybeEmail
   in
@@ -82,7 +81,6 @@ parseEmail' = parse emailGrammar "Email"
 n,w :: B8.ByteString -> PEG
 n = NonTerminal
 w = Terminal . LitBS
-
 
 emailGrammar ::Grammar
 emailGrammar
