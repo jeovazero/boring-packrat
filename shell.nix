@@ -8,7 +8,7 @@ let
 
   haskellPackages = haskell.packages.ghc8104;
 
-  project = import ./default.nix;
+  project = import ./default.nix {};
 
 in pkgs.stdenv.mkDerivation {
   name = "shell";
