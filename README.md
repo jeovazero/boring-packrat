@@ -1,6 +1,6 @@
 ## Boring Packrat
 
-A packrat parser using Boring Haskell.
+A packrat parser using [Boring Haskell](https://www.simplehaskell.org/) (a.k.a Simple Haskell).
 
 The initial objective of the project was to make an email validator to use in another project,
 but it would be very easy just use a library from Hackage, so why not make a parser for fun?
