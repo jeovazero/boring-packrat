@@ -5,4 +5,4 @@ build:
 	nix-build default.nix
 
 tests:
-	cabal v2-test
+	cabal v1-test

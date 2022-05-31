@@ -18,7 +18,9 @@ _BracketLeft,_BracketRight,_BraceLeft,_BraceRight,_Colon,_TextSpecials :: PEG
 _Dquote,_Backslash :: PEG
 
 _WSP = Choice [Terminal SP, Terminal Tab]
-_CRLF = Terminal CR # Terminal LF
+_CRLF = _CR # _LF
+_CR = Terminal CR
+_LF = Terminal LF
 _VCHAR = range (0x21, 0x73) -- visible (printing) characters
 _At = lit W._at -- '@'
 _Dot = lit W._period -- '.'

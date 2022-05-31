@@ -56,6 +56,8 @@ data Terminal'
   | LitBS B.ByteString
   | Range (Word8,Word8)
   | Alpha
+  | AlphaLower
+  | AlphaUpper
   | Digit
   | HexDigit
   | AlphaDigit
@@ -174,7 +176,7 @@ remapNonTerminals name2IndexMap peg =
     NonTerminal nonTermName ->
       case Map.lookup nonTermName name2IndexMap of
         Just index -> NT index
-        Nothing -> error "Rule name not Expected"
+        Nothing -> error $ concat ["Rule name ", show peg ," not Expected"]
     Cons pegA pegB -> Cons (remap pegA) (remap pegB)
     Sequence pegs -> Sequence . fmap remap $ pegs
     Many0 peg' -> Many0 $ remap peg'
@@ -370,6 +372,14 @@ parse' grammar word = (parseRange (0, B.length word),name2IndexMap)
                     if W.isAlpha x
                     then Parsed (a,a) ast layer'
                     else NoParse a ["Alpha"]
+                  AlphaLower ->
+                    if W.isLower x
+                    then Parsed (a,a) ast layer'
+                    else NoParse a ["AlphaLower"]
+                  AlphaUpper ->
+                    if W.isUpper x
+                    then Parsed (a,a) ast layer'
+                    else NoParse a ["AlphaUpper"]
                   AlphaDigit ->
                     if W.isAlphaNum x
                     then Parsed (a,a) ast layer'
