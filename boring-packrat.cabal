@@ -30,7 +30,8 @@ executable toy-lang
   import: deps
   hs-source-dirs: toy-lang
   main-is: Main.hs
-  build-depends: boring-packrat
+  build-depends: boring-packrat,
+                 pretty-simple
 
 library
   import:              deps
