@@ -9,11 +9,12 @@ import BoringPackrat (
     substr
   )
 import BoringPackrat.Terminals
-import BoringPackrat.PrettyPrint (prettyPrint)
 import qualified Data.Word8 as W
 import qualified Data.ByteString.Char8 as B8
 import Data.Maybe (fromJust)
 import Text.Pretty.Simple (pPrint)
+-- import BoringPackrat.PrettyPrint (prettyPrint)
+-- import Debug.Trace
 
 n = NonTerminal
 _ParenLeft  = Terminal $ Lit W._parenleft  -- '('
@@ -45,7 +46,7 @@ grammar =
   , ("param", Choice [n"identifier", n"decimal"])
   , ("call", Sequence [n"identifier", Many0 $ n"args"])
   , ("args", Sequence [n"__", n"argument"])
-  , ("argument", Choice [n"identifier", n"expr"])
+  , ("argument", Choice [n"identifier", n"parens", n"decimal"])
   , ("identifier", Sequence [Many1 $ n"wW", Many0 _Apostrofe])
   , ("wW", _Alpha)
   , ("W", _Upper)
@@ -53,7 +54,9 @@ grammar =
   , ("decimal", Many1 _Digit)
   , ("equal", _Equal)
   , ("apostrofe", _Apostrofe)
-  , ("plusminus", Choice [_Plus, _Minus])
+  , ("plusminus", Choice [n"plus",n"minus"])
+  , ("plus", _Plus)
+  , ("minus", _Minus)
   , ("times", _Times)
   , ("run", litBS "run")
   , ("_", Many0 _WSP)
@@ -65,12 +68,13 @@ grammar =
 
 type Identifier = B8.ByteString
 
-data Program    = Program [Fun] RunCall                deriving (Show)
-data Fun        = Fun Identifier [Params] Expr         deriving (Show)
-data Params     = ParamId Identifier | ParamNum Int    deriving (Show)
-data RunCall    = RunCall Expr                         deriving (Show)
+data Program    = Program [Fun] RunCall             deriving (Show)
+data Fun        = Fun Identifier [Params] Expr      deriving (Show)
+data Params     = ParamId Identifier | ParamNum Int deriving (Show)
+data RunCall    = RunCall Expr                      deriving (Show)
 data Expr
     = Add Expr Expr
+    | Sub Expr Expr
     | Mult Expr Expr
     | Decimal Int
     | Call Identifier [Arg] 
@@ -83,7 +87,8 @@ data Arg
 toArg input ast =
   case ast of
     Rule range "identifier" _ -> ArgId $ substr range input
-    Rule _ "expr" ast'        -> ArgExpr $ toExpr input ast'
+    Rule _ "parens" _         -> ArgExpr $ toExpr input ast
+    Rule _ "decimal" _        -> ArgExpr $ toExpr input ast
     rule -> error ("wrong identifier rule: " ++ show rule)
 
 toArgs input ast =
@@ -94,8 +99,11 @@ toArgs input ast =
 
 toExpr input ast =
   case ast of
-    Rule _ "add" (Seq _ [a,_,_,_,b]) ->
-      Add (toExpr input a) (toExpr input b)
+    Rule _ "add" (Seq _ [a,_,Rule _ _ op,_,b]) ->
+      case op of
+        Rule _ "plus" _ -> Add (toExpr input a) (toExpr input b)
+        Rule _ "minus" _ -> Sub (toExpr input a) (toExpr input b)
+        rule -> error $ "wrong addend op: " ++ show rule
     Rule _ "mult" (Seq _ [a,_,_,_,b]) ->
       Mult (toExpr input a) (toExpr input b)
     Rule _ "parens" (Seq _ [_,_,e,_,_]) ->
@@ -117,7 +125,7 @@ toParamRule input ast =
 toParam input ast =
   case ast of
     Rule range "identifier" _  -> ParamId $ substr range input
-    Rule range "number" _      -> ParamNum . read . B8.unpack $ substr range input
+    Rule range "decimal" _      -> ParamNum . read . B8.unpack $ substr range input
     rule -> error ("wrong param rule: " ++ show rule)
 
 toFunRule input ast =
@@ -154,24 +162,36 @@ toProgram input ast =
     Rule _ "program" (Seq _ [funs, _, runcall, _]) -> Program (toFuns input funs) (toRuncall input runcall)
     rule -> error $ "wrong program rule: " ++ (show rule)
 
-main = do
-  let input =
-        B8.unlines
-            [ 
-             "f x = x"
-            --, "g a b = a + b"
-            --, "fat n = fat' n 1"
-            --, "fat' 1 acc = acc"
-            --, "fat' n acc = fat (n - 1) (n * acc)"
-            --, "expr a b = g 1 b - a * f 8"
-            , "run (fat 5 + expr 4 9)"
-            ]
-
+program input = do
   putStrLn $ B8.unpack input
   let result = parse grammar "program" input
   -- print $ result
   let ast = fromJust $ astFrom result
-
-  -- prettyPrint input ast
   pPrint $ toProgram input ast
 
+main = do
+  let input1 =
+        B8.unlines
+            [ "fat n = fat' n 1"
+            , "fat' 1 acc = acc"
+            , "fat' n acc = fat' (n - 1) (n * acc)"
+            , "run (fat 10)"
+            ]
+
+  let input2 =
+        B8.unlines
+            [ "f x = x"
+            , "g a b = a + b"
+            , "fat n = fat' n 1"
+            , "fat' 1 acc = acc"
+            , "fat' n acc = fat' (n - 1) (n * acc)"
+            , "expr a b = g 1 b - a * f 8"
+            , "run (fat 5 + expr 4 9)"
+            ]
+
+  {-
+  -- TODO: grammar should accept this one
+  let input3 = "run (a + f (b * (c - d) + 5 - (8 - 7)))"
+  -}
+  program input1
+  program input2
