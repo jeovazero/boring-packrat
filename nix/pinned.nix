@@ -1,8 +1,8 @@
-let
+ let
   pinnedPkgs = builtins.fetchTarball {
-    name = "nixos-21.05-2021-06-22";
-    url = "https://github.com/nixos/nixpkgs/archive/06db2e2197401b74fcf82d4e84be15b0b5851c7b.tar.gz";
+    name = "nixos-22.05-2022-08-21";
+    url = "https://github.com/nixos/nixpkgs/archive/48e760269215857628caa9e08eb14754cefd0c1a.tar.gz";
     # Hash obtained using `nix-prefetch-url --unpack <url>`
-    sha256 = "0p3c9gjjdr1gz55al2s5yhh59kx8fqbgzhw4cab3mqair9h84m4j";
+    sha256 = "1nvsc9r822kcs0zjnzsx5833az4ysqpj5hqswqfvqi7rrc6m17rx";
   };
  in import pinnedPkgs
