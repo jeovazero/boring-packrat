@@ -6,7 +6,7 @@ let
 
   inherit (pkgs) haskell cabal2nix cabal-install ghcid;
 
-  haskellPackages = haskell.packages.ghc8104;
+  haskellPackages = haskell.packages.ghc902;
 
   project = import ./default.nix {};
 

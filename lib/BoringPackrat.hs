@@ -56,6 +56,8 @@ data Terminal'
   | LitBS B.ByteString
   | Range (Word8,Word8)
   | Alpha
+  | AlphaLower
+  | AlphaUpper
   | Digit
   | HexDigit
   | AlphaDigit
@@ -174,7 +176,7 @@ remapNonTerminals name2IndexMap peg =
     NonTerminal nonTermName ->
       case Map.lookup nonTermName name2IndexMap of
         Just index -> NT index
-        Nothing -> error "Rule name not Expected"
+        Nothing -> error $ concat ["Rule name ", show peg ," not Expected"]
     Cons pegA pegB -> Cons (remap pegA) (remap pegB)
     Sequence pegs -> Sequence . fmap remap $ pegs
     Many0 peg' -> Many0 $ remap peg'
@@ -196,9 +198,9 @@ extractErrors :: Result -> [B8.ByteString]
 extractErrors (NoParse _ errors) = errors
 extractErrors _ = []
 
-mergeErrors :: [B8.ByteString] -> Result -> Result
-mergeErrors err (NoParse i errors) = NoParse i (errors ++ err)
-mergeErrors _ other = other
+resultOrMergeErrors :: [B8.ByteString] -> Result -> Result
+resultOrMergeErrors err (NoParse i errors) = NoParse i (errors ++ err)
+resultOrMergeErrors _ other = other
 
 -- | a Void indicates that is the end of the input
 isVoidLayer :: Layer -> Bool
@@ -222,10 +224,6 @@ parse' grammar word = (parseRange (0, B.length word),name2IndexMap)
           (\(_,rule,_) -> remapNonTerminals name2IndexMap rule)
           indexes
     indexToNameVec = V.fromList $ fmap (\(name,_,_) -> name) indexes
-
-    manyResult start (Parsed (_,end) _ layer) =
-      Parsed (start,end) (Str $ substr (start,end) word) layer
-    manyResult _ noParse = noParse
 
     parsePegNT = \layer index ->
       case nonTerminalsVec V.!? index of
@@ -263,23 +261,29 @@ parse' grammar word = (parseRange (0, B.length word),name2IndexMap)
       where
         accIndex' index = if isParsed acc then accIndex else index
 
-    repeatPEGwithMax peg max' count layer lastResult
-      | count >= max' = (count, lastResult)
+    mapManyResult result start acc =
+      case result of
+        Parsed (_,end) cur layer' ->
+            Parsed (start,end) (Seq (start,end) (reverse (cur:acc))) layer'
+        r -> r
+
+    repeatPEGwithMax start peg max' count layer acc lastResult
+      | count >= max' = (count, mapManyResult lastResult start $ tail acc)
       | otherwise =
           case parsePEG layer peg of
-            result@(Parsed _ _ layer') ->
+            result@(Parsed _ cur layer') ->
               if isVoidLayer layer'
-              then (count + 1, result)
-              else repeatPEGwithMax peg max' (count + 1) layer' result
-            NoParse _ errors -> (count,mergeErrors errors lastResult)
+              then (count + 1, mapManyResult result start acc)
+              else repeatPEGwithMax start peg max' (count + 1) layer' (cur:acc) result
+            NoParse _ errors -> (count,resultOrMergeErrors errors $ mapManyResult lastResult start $ tail acc)
 
-    repeatPEG peg count layer lastResult =
+    repeatPEG start peg count layer acc lastResult =
       case parsePEG layer peg of
-        result@(Parsed _ _ layer') ->
+        result@(Parsed _ cur layer') ->
           if isVoidLayer layer'
-          then (count + 1, result)
-          else repeatPEG peg (count + 1) layer' result
-        NoParse _ errors -> (count,mergeErrors errors lastResult)
+          then (count + 1, mapManyResult result start acc)
+          else repeatPEG start peg (count + 1) layer' (cur:acc) result
+        NoParse _ errors -> (count,resultOrMergeErrors errors $ mapManyResult lastResult start $ tail acc)
 
     parsePEG layer peg =
       case char layer of
@@ -299,7 +303,7 @@ parse' grammar word = (parseRange (0, B.length word),name2IndexMap)
             And peg' ->
               case parsePEG layer peg' of
                 Parsed {} -> Parsed (a,a-1) Void layer 
-                other -> mergeErrors ["And"] other
+                other -> resultOrMergeErrors ["And"] other
             Not peg' ->
               case parsePEG layer peg' of
                 NoParse _ _ -> Parsed (a,a-1) Void layer 
@@ -315,17 +319,17 @@ parse' grammar word = (parseRange (0, B.length word),name2IndexMap)
                   Just max' ->
                     let
                       (count, result) =
-                        repeatPEGwithMax peg' max' 0 layer (NoParse a ["Many"])
+                        repeatPEGwithMax a peg' max' 0 layer [] (NoParse a ["Many"])
                     in
                       if min' <= count && count <= max'
-                      then manyResult a result
-                      else case manyResult a result of
+                      then result
+                      else case result of
                         NoParse i _ -> NoParse i ["Many"]
                         Parsed (_,b) _ _ -> NoParse (b + 1) ["Many"]
                   Nothing ->
                     let
                       (count, result) =
-                        repeatPEG peg' 0 layer (NoParse a ["Many"])
+                        repeatPEG a peg' 0 layer [] (NoParse a ["Many"])
                       cursorIndex =
                         case result of
                           NoParse i _ -> i
@@ -333,7 +337,7 @@ parse' grammar word = (parseRange (0, B.length word),name2IndexMap)
                     in 
                       if min' <= count
                       then
-                        case manyResult a result of
+                        case result of
                           NoParse _ errors ->
                             if min' == 0
                             then Parsed (a,a-1) Void layer
@@ -370,6 +374,14 @@ parse' grammar word = (parseRange (0, B.length word),name2IndexMap)
                     if W.isAlpha x
                     then Parsed (a,a) ast layer'
                     else NoParse a ["Alpha"]
+                  AlphaLower ->
+                    if W.isLower x
+                    then Parsed (a,a) ast layer'
+                    else NoParse a ["AlphaLower"]
+                  AlphaUpper ->
+                    if W.isUpper x
+                    then Parsed (a,a) ast layer'
+                    else NoParse a ["AlphaUpper"]
                   AlphaDigit ->
                     if W.isAlphaNum x
                     then Parsed (a,a) ast layer'

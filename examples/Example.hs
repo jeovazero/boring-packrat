@@ -1,13 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings #-}
 import BoringPackrat (
     parse,
     astFrom,
     AST(..),
     Terminal'(..),
     PEG(..),
-    Grammar
+    Grammar, substr
   )
 import BoringPackrat.PrettyPrint (prettyPrint)
+import BoringPackrat.Terminals
 import qualified Data.Word8 as W
 import qualified Data.ByteString.Char8 as B8
 import Data.Maybe (fromJust)
@@ -35,19 +37,19 @@ data Expr
     | Decimal Int
     deriving (Show)
 
-transformAST :: AST -> Expr
-transformAST ast =
+transformAST :: B8.ByteString -> AST -> Expr
+transformAST input ast =
   case ast of
     Rule _ "Add" (Seq _ [a,_,b]) ->
-      Add (transformAST a) (transformAST b)
+      Add (transformAST input a) (transformAST input b)
     Rule _ "Mult" (Seq _ [a,_,b]) ->
-      Mult (transformAST a) (transformAST b)
+      Mult (transformAST input a) (transformAST input b)
     Rule _ "Parens" (Seq _ [_,e,_]) ->
-      transformAST e
-    Rule _ "Decimal" (Str d) ->
-      Decimal (read $ B8.unpack d)
-    Rule _ _ e -> transformAST e
-    _ -> error "Not implemented"
+      transformAST input e
+    Rule _ "Decimal" (Seq r _) ->
+      Decimal (read . B8.unpack $ substr r input)
+    Rule _ _ e -> transformAST input e
+    r -> error $ "Not implemented " ++ (show r)
 
 main = do
   let input = "(1+2)*3"
@@ -55,4 +57,4 @@ main = do
   let ast = fromJust $ astFrom result
 
   prettyPrint input ast
-  print $ transformAST ast
+  print $ transformAST input ast

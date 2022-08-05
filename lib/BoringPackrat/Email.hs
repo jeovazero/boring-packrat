@@ -107,7 +107,7 @@ emailGrammar
     -- 0*(ALPHA / DIGIT / "-") (ALPHA / DIGIT)
   , ("StandardizedTag", Many1 (Many0 _Hyphen # _AlphaDigit))
     -- Printable US-ASCII, excl. "[", "\", "]"
-  , ("Dcontent", Choice [range (33,90), range (94,126)])
+  , ("Dcontent", Choice [rangeChar (33,90), rangeChar (94,126)])
     -- 1*3DIGIT
   , ("Snum", Many (1,3) _Digit)
     -- IPv6-full / IPv6-comp / IPv6v4-full / IPv6v4-comp
@@ -164,15 +164,15 @@ emailGrammar
   , ("QcontentSMTP", Choice [n"QtextSMTP", n"QuotedPairSMTP"])
     -- backslash followed by any ASCII
     -- graphic (including itself) or SPace
-  , ("QuotedPairSMTP", _Backslash # range (32, 126))
+  , ("QuotedPairSMTP", _Backslash # rangeChar (32, 126))
 
     -- within a quoted string, any
     -- ASCII graphic or space is permitted
     -- without blackslash-quoting except
     -- double-quote and the backslash itself. 
-  , ("QtextSMTP", Choice [range (32,33), range (35,91), range (93, 126)])
+  , ("QtextSMTP", Choice [rangeChar (32,33), rangeChar (35,91), rangeChar (93, 126)])
     -- Printable ascii, not '\' '"'
-  , ("Qtext", Choice [lit 33, range (35, 91), range (93, 126)])
+  , ("Qtext", Choice [lit 33, rangeChar (35, 91), rangeChar (93, 126)])
     -- "\" (VCHAR / WSP)
   , ("QuotedPair", _Backslash # Choice [_VCHAR,_WSP])
     -- [CFWS] "[" *([FWS] dtext) [FWS] "]" [CFWS]
@@ -185,7 +185,7 @@ emailGrammar
     # Optional (n"CFWS")
     )
     -- Printable ASCII chars, not '[' ']' '\'
-  , ("Dtext", Choice [range (33,90), range(94,126)])
+  , ("Dtext", Choice [rangeChar (33,90), rangeChar (94,126)])
     --  (1*([FWS] comment) [FWS]) / FWS
   , ("CFWS", Choice [Many1 (Optional (n"FWS") # n"Comment") # Optional (n"FWS"), n"FWS"])
     -- [*WSP CRLF] 1*WSP
@@ -200,5 +200,5 @@ emailGrammar
     -- ctext / quoted-pair / comment
   , ("Ccontent", Choice [n"Ctext", n"QuotedPair", n"Comment"])
     -- printable ascii, not '(' ')' '\'
-  , ("Ctext", Choice [range (33,39), range(42, 91), range (93, 126)])
+  , ("Ctext", Choice [rangeChar (33,39), rangeChar (42, 91), rangeChar (93, 126)])
   ] 

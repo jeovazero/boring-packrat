@@ -1,5 +1,9 @@
 cradle:
   cabal:
+    - path: "./toy-lang"
+      component: "exe:toy-lang"
+    - path: "./examples"
+      component: "exe:examples"
     - path: "./lib"
       component: "lib:boring-packrat"
     - path: "./test"
