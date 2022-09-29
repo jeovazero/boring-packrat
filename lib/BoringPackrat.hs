@@ -24,6 +24,7 @@ import qualified Data.ByteString.Char8 as B8
 import Data.Word (Word8)
 import qualified Data.Map as Map
 import Data.List as L
+import Data.Int
 import qualified Data.Word8 as W
 import qualified Data.Vector as V
 import qualified Data.Set as Set
@@ -54,7 +55,7 @@ data Terminal'
   = Lit Word8
   | LitWord [Word8]
   | LitBS B.ByteString
-  | Range (Word8,Word8)
+  | Range (Int32,Int32)
   | Alpha
   | AlphaLower
   | AlphaUpper

@@ -16,6 +16,7 @@ build-type:            Simple
 common deps
   build-depends:       base,
                        bytestring,
+                       utf8-string,
                        word8,
   ghc-options:         -Wall
   default-language:    Haskell2010
@@ -39,7 +40,9 @@ library
   exposed-modules:     BoringPackrat,
                        BoringPackrat.Email,
                        BoringPackrat.Terminals,
-                       BoringPackrat.PrettyPrint
+                       BoringPackrat.Bits,
+                       BoringPackrat.PrettyPrint,
+                       BoringPackrat2
   build-depends:       containers,
                        vector 
 

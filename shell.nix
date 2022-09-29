@@ -18,4 +18,6 @@ in pkgs.stdenv.mkDerivation {
     cabal2nix
     ghcid
   ];
+
+  LOCALE_ARCHIVE = "/usr/lib/locale/locale-archive";
 }
