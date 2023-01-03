@@ -1,4 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Redundant lambda" #-}
+{-# LANGUAGE BangPatterns #-}
 module BoringPackrat2 (
   AST(..),
   astFrom,
@@ -118,7 +121,7 @@ type Grammar = [GrammarRule]
 type Range = (Int,Int)
 
 data Result
-  = Parsed Range AST (Maybe Layer)
+  = Parsed Range AST Layer
   | NoParse Int [B.ByteString]
   deriving (Show)
 
@@ -144,11 +147,21 @@ data ParsedResult
 --    )
 --
 data Layer = Layer {
+  charCode :: CharCode,
   memo :: V.Vector Result,
-  char :: BytePack,
-  loc :: (Int, Word8), -- (startIndex,consumed bits)
-  next :: Maybe Layer
+  nextLayer :: Layer
 }
+
+-- (char bytes, bytes len, location)
+newtype CharCode = CharCode { unCode :: Int32 }
+voidCharCode = CharCode 0
+
+isVoidLayer (Layer c _ _) = isVoidCharCode c
+
+voidLayer = Layer voidCharCode undefined voidLayer
+
+isVoidCharCode (CharCode 0) = True
+isVoidCharCode _ = False
 
 instance Show Layer where
   show _ = "Layer [...]"
@@ -156,7 +169,7 @@ instance Show Layer where
 data AST
   = Seq Range [AST]
   | Rule BString Range AST
-  | Str BString
+  | Str Range
   | Void
   deriving (Show,Eq)
 
@@ -217,43 +230,68 @@ resultOrMergeErrors _ other = other
 substr :: (Int,Int) -> B.ByteString -> B.ByteString
 substr (a,b) = B.take (b - a + 1) . B.drop a
 
-voidParsed a = Parsed (a,a - 1) Void
+voidParsed a = let !b = a - 1 in Parsed (a,b) Void
 
-parseWord :: BString -> Layer -> Result
-parseWord bstr l = parseWord' l 0 (voidParsed a (Just l))
+parseWord layer loc str = parseWord' str 0 (voidParsed loc layer)
   where
-    a = fst . loc $ l
-    ln = bsLength bstr
+    len = bsLength str
     parseWord' _ _ r@(NoParse _ _) = r
-    parseWord' layer i acc@(Parsed (r,_) _ _)
-      | i >= ln = acc
+    parseWord' bstr i (Parsed (a,b) ast ly)
+      | i >= len = Parsed (a,b) (Str (a,b)) ly
       | otherwise =
         let
-          (value,consumed) = consumeBits bstr i
-          s' = fst . loc $ layer
-          c = bytePackToInt . char $ layer
-          layer' = next layer
-          acc' = if c == bytePackToInt value
-              then Parsed (r,s' + fromIntegral consumed - 1) Void layer'
-              else NoParse r ["parseWord", B8.pack $ show c]
-          i' = i + fromIntegral consumed
-        in case layer' of
-             Nothing -> acc'
-             Just l' -> parseWord' l' i' acc'
+          (bpack, consumed) = consumeBits bstr i
+          ccode = bytePackToInt bpack
+          lycode = unCode $ charCode ly
+          ly' = nextLayer ly
+          acc' = if ccode == lycode
+                   then Parsed (a,b + fromIntegral consumed - 1) ast ly'
+                   else NoParse b ["ERR_OO1"]
+          !i' = i + 1
+          ans = parseWord' bstr i' acc'
+        in 
+          ans
 
-parseSequence :: [PEG] -> Layer -> (Layer -> PEG -> Result) -> Result
-parseSequence rules layer runPeg = parseSequence' rules (Just layer) rg []
+type PEGRunner = Layer -> Int -> PEG -> Result
+
+locFromRange (_,b) = b + 1
+
+parseSequence :: Layer -> Int -> [PEG] -> PEGRunner -> Result
+parseSequence baseLayer baseLoc rules runPeg =
+  case ans of
+    Right (layer, loc, list) ->
+      let range = (baseLoc, loc - 1) in Parsed range (Seq range (reverse list)) layer
+    Left err -> err
   where
-    rg0 = fst . loc $ layer
-    rg = (rg0, rg0 - 1)
-    parseSequence' [] l rg' acc = Parsed rg' (Seq rg' $ reverse acc) l 
-    parseSequence' (_:_) Nothing (u,_) _ = NoParse u ["sequence"]
-    parseSequence' (r:rs) (Just l) (u,_) acc =
-      case runPeg l r of
-        Parsed (_,v') ast l' -> parseSequence' rs l' (u,v') (ast:acc)
-        NoParse i e -> NoParse i ("sequence":e)
-        
-parse' :: Grammar -> BString -> (Maybe Layer, Map.Map B.ByteString Int)
+    ans = foldl' f (Right (baseLayer,baseLoc,[])) rules
+    -- use f = map f'
+    f (Right (layer,loc,list)) peg =
+      case runPeg layer loc peg of
+        Parsed range ast layer' -> Right (layer', locFromRange range, ast:list)
+        n -> Left n
+    f r _ = r
+
+parseChoice :: Layer -> Int -> [PEG] -> PEGRunner -> Result
+parseChoice layer loc rules runPeg =
+  case find isParsed (map (runPeg layer loc) rules) of
+    Just result -> result
+    Nothing -> NoParse loc ["ERR_003"]
+
+parseMany :: Layer -> Int -> PEG -> PEGRunner -> Result
+parseMany layer loc rule runPeg =
+  let
+    (asts,layer',loc') = parseMany' [] layer loc rule runPeg
+  in
+  if null asts
+  then voidParsed loc layer'
+  else let range = (loc,loc') in Parsed range (Seq range (reverse asts)) layer'
+
+parseMany' asts layer loc rule runPeg =
+  case runPeg layer loc rule of
+    NoParse _ _ -> (asts,layer,loc)
+    Parsed range ast layer' -> parseMany' (ast:asts) layer' (locFromRange range) rule runPeg
+
+parse' :: Grammar -> BString -> (Layer, Map.Map B.ByteString Int)
 parse' grammar word =
   let
     --(index,name,peg)
@@ -273,10 +311,11 @@ parse' grammar word =
           indexes
 
     -- Step 1
-    parsePegNT = \layer index ->
+    parsePegNT :: Layer -> Int -> Int -> Result
+    parsePegNT = \layer index loc ->
       case nonTerminalsVec V.!? index of
         Just peg' ->
-          case parsePEG layer peg' of
+          case parsePEG layer loc peg' of
             Parsed r ast l -> Parsed r (Rule (indexToNameVec V.! index) r ast) l
             NoParse i list ->
               NoParse i (B.concat ["Rule ",indexToNameVec V.! index]:list)
@@ -285,56 +324,53 @@ parse' grammar word =
     memoNonTerminalFrom layer index = memo layer V.! index
 
     -- HELLO! Working HERE
-    parsePEG layer peg =
-      let
-        x = bytePackToInt . char $ layer
-        (a,_) = loc layer
-      in
+    parsePEG layer loc peg =
       case peg of
-        Terminal term ->
+        Terminal term  ->
           case term of
-            LitBS ws -> parseWord ws layer
-            _ -> undefined
-        NT index -> memoNonTerminalFrom layer index
-        Sequence rules -> parseSequence rules layer parsePEG
-        notImplemented ->
-          error $ "Not implemented => " ++ show notImplemented
+            LitBS str -> parseWord layer loc str
+            _         -> undefined
+        Many0 rule     -> parseMany layer loc rule parsePEG
+        NT index       -> memoNonTerminalFrom layer index
+        Sequence rules -> parseSequence layer loc rules parsePEG
+        Choice rules   -> parseChoice layer loc rules parsePEG
+        notImplemented -> error $ "Not implemented => " ++ show notImplemented
 
-    generateLayers index =
+    generateLayers loc =
       let
-        inTheVoid = bsLength word <= index
-        -- todo: review the parsePegNT, 'cause nonTerminalsVec
-        memo' = V.imap (\i _ -> parsePegNT layer i) nonTerminalsVec
-        (bpack,consumed) = consumeBits word index
-        char' = bpack
-        index' = index + fromIntegral consumed
-        next' = generateLayers index'
-        layer = Layer memo' char' (index, consumed) next'
+        isReachedTheEnd = bsLength word <= loc
+
+        memo' = V.imap (\i _ -> parsePegNT layer i loc) nonTerminalsVec
+        (bpack,consumed) = consumeBits word loc
+        
+        !loc' = loc + fromIntegral consumed
+
+        !code = bytePackToInt bpack 
+
+        charCode' = CharCode code
+        
+        nextLayer' = generateLayers loc'
+
+        layer = Layer charCode' memo' nextLayer'
       in
-        if inTheVoid
-        then Nothing
-        else Just layer
+        if isReachedTheEnd then voidLayer else layer
   in
     (generateLayers 0, name2IndexMap)
 
 parse :: Grammar -> RuleName -> B.ByteString -> ParsedResult
 parse grammar startRulename input =
   let
-    (r, rulename2indexMap) = parse' grammar input
+    (layer, rulename2indexMap) = parse' grammar input
     startIndex = case Map.lookup startRulename rulename2indexMap of
       Just index -> index
       Nothing    -> -1
   in
-  case r of
-    Just parsedResult ->
-      case memo parsedResult V.!? startIndex of
-        Just k ->
-          case k of
-            result@(Parsed (_,end) _ _) ->
-              if end == B.length input - 1
-              then TotallyConsumed result
-              else PartiallyConsumed result
-            NoParse i' errors -> NotParsed i' errors
-        Nothing -> error "Trying to access an empty vector"
-
-    _ -> error $ show r
+    case memo layer V.!? startIndex of
+      Just k ->
+        case k of
+          result@(Parsed (_,end) _ _) ->
+            if end == B.length input - 1
+            then TotallyConsumed result
+            else PartiallyConsumed result
+          NoParse i' errors -> NotParsed i' errors
+      Nothing -> error "Trying to access an empty vector"
