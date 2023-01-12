@@ -43,7 +43,6 @@ library
                        BoringPackrat.Bits,
                        BoringPackrat.Chars,
                        BoringPackrat.PrettyPrint,
-                       BoringPackrat2
   build-depends:       containers,
                        vector 
 
@@ -56,4 +55,4 @@ test-suite spec
   build-tool-depends: hspec-discover:hspec-discover == 2.*
   build-depends:      boring-packrat,
                       hspec
-  other-modules:      CoreSpec, EmailSpec
+  other-modules:      EmailSpec

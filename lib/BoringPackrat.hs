@@ -1,4 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Redundant lambda" #-}
+{-# LANGUAGE BangPatterns #-}
 module BoringPackrat (
   AST(..),
   astFrom,
@@ -15,29 +18,26 @@ module BoringPackrat (
   Result(..),
   RuleName,
   substr,
-  Terminal'(..),
-  (#)
+  Terminal'(..)
 ) where
 
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as B8
-import Data.Word (Word8)
 import qualified Data.Map as Map
 import Data.List as L
 import Data.Int
-import qualified Data.Word8 as W
 import qualified Data.Vector as V
-import qualified Data.Set as Set
 import Prelude as P
+import BoringPackrat.Bits
+import BoringPackrat.Chars as C
+import Debug.Trace
 
 data PEG
-  = Cons PEG PEG
-  | Sequence [PEG]
+  = Sequence [PEG]
   | Many0 PEG
   | Many1 PEG
   | ManyN Int PEG
   | Many (Int,Int) PEG
-  | Many' (Int, Maybe Int) PEG
   | Repeat Int PEG -- alias for `Many (n, n) PEG`
   | Choice [PEG]
   | Optional PEG
@@ -48,13 +48,9 @@ data PEG
   | NT Int
   deriving (Show)
 
-(#) :: PEG -> PEG -> PEG
-(#) = Cons
-
 data Terminal'
-  = Lit Word8
-  | LitWord [Word8]
-  | LitBS B.ByteString
+  = Lit Int32
+  | LitBS BString
   | Range (Int32,Int32)
   | Alpha
   | AlphaLower
@@ -71,49 +67,6 @@ data Terminal'
   | SP -- space
   deriving (Show)
    
-specials, textSpecials :: [Word8]
-specials
-  = [ W._parenleft    -- '('
-    , W._parenright   -- ')'
-    , W._less         -- '<'
-    , W._greater      -- '>'
-    , W._bracketleft  -- '['
-    , W._bracketright -- ']'
-    , W._colon        -- ':'
-    , W._semicolon    -- ';'
-    , W._at           -- '@'
-    , W._backslash    -- '\\'
-    , W._comma        -- ','
-    , W._period       -- '.'
-    , W._quotedbl     -- '"'
-    ]
-
-textSpecials
-  = [ W._exclam      -- '!'
-    , W._numbersign  -- '#'
-    , W._dollar      -- '$'
-    , W._percent     -- '%'
-    , W._ampersand   -- '&'
-    , W._quotesingle -- '\''
-    , W._asterisk    -- '*'
-    , W._plus        -- '+'
-    , W._hyphen      -- '-'
-    , W._slash       -- '/'
-    , W._equal       -- '='
-    , W._question    -- '?'
-    , W._circum      -- '^'
-    , W._underscore  -- '_'
-    , W._grave       -- '`'
-    , W._braceleft   -- '{'
-    , W._braceright  -- '}'
-    , W._bar         -- '|'
-    , W._tilde       -- '~'
-    ]
-
-specialsSet, textSpecialsSet :: Set.Set Word8
-specialsSet = Set.fromList specials
-textSpecialsSet = Set.fromList textSpecials
-
 type RuleName = B.ByteString
 type GrammarRule = (RuleName,PEG)
 type Grammar = [GrammarRule]
@@ -133,19 +86,45 @@ data ParsedResult
   deriving (Show)
 
 -- for each char in the input has a Layer
+-- n char X n rule = result
+--
+-- word: duck
+-- rules: A , B , C , D
+-- (memo = [A, B, C, D], char = d, next = (
+--    memo = [A, B, C, D], char = u, next = (
+--      memo = [A, B, C, D], char = c, next = (
+--        memo = [A, B, C, D] = char = k, next = Void
+--        )
+--      )
+--    )
+--
 data Layer = Layer {
+  charCode :: CharCode,
   memo :: V.Vector Result,
-  char :: Result
+  nextLayer :: Layer
 }
+
+-- (char bytes, bytes len, location)
+newtype CharCode = CharCode { unCode :: Int32 }
+voidCharCode = CharCode 0
+
+isVoidLayer (Layer c _ _) = isVoidCharCode c
+
+voidLayer m = Layer voidCharCode m (voidLayer m)
+
+compareCharCode (Layer c _ _) code = unCode c == code
+w8CharCode (Layer c _ _) w8code = fromIntegral $ unCode c
+
+isVoidCharCode (CharCode 0) = True
+isVoidCharCode _ = False
 
 instance Show Layer where
   show _ = "Layer [...]"
 
 data AST
-  = Cons' Range AST AST
-  | Seq Range [AST]
-  | Rule Range B.ByteString AST
-  | Str B.ByteString
+  = Seq Range [AST]
+  | Rule BString Range AST
+  | Str Range
   | Void
   deriving (Show,Eq)
 
@@ -178,13 +157,11 @@ remapNonTerminals name2IndexMap peg =
       case Map.lookup nonTermName name2IndexMap of
         Just index -> NT index
         Nothing -> error $ concat ["Rule name ", show peg ," not Expected"]
-    Cons pegA pegB -> Cons (remap pegA) (remap pegB)
     Sequence pegs -> Sequence . fmap remap $ pegs
     Many0 peg' -> Many0 $ remap peg'
     Many1 peg' -> Many1 $ remap peg'
     ManyN int peg' -> ManyN int $ remap peg'
     Many range peg' -> Many range $ remap peg'
-    Many' range peg' -> Many' range $ remap peg'
     Repeat int peg' -> Repeat int $ remap peg'
     Optional peg' -> Optional $ remap peg'
     And peg' -> And $ remap peg'
@@ -203,248 +180,203 @@ resultOrMergeErrors :: [B8.ByteString] -> Result -> Result
 resultOrMergeErrors err (NoParse i errors) = NoParse i (errors ++ err)
 resultOrMergeErrors _ other = other
 
--- | a Void indicates that is the end of the input
-isVoidLayer :: Layer -> Bool
-isVoidLayer layer =
-  case char layer of
-    Parsed _ Void _ -> True
-    _ -> False
-
 -- | Returns a substring with range [a,b]
 substr :: (Int,Int) -> B.ByteString -> B.ByteString
 substr (a,b) = B.take (b - a + 1) . B.drop a
 
-parse' :: Grammar -> B.ByteString -> (Layer, Map.Map B.ByteString Int)
-parse' grammar word = (parseRange (0, B.length word),name2IndexMap)
+voidParsed a = let !b = a - 1 in Parsed (a,b) Void
+
+parseWord bLayer loc str = parseWord' str 0 (voidParsed loc bLayer)
   where
-    indexes = L.zipWith (\i (name,rule) -> (name,rule,i)) [0..] grammar
-    name2IndexMap = Map.fromList $ fmap (\(name,_,i) -> (name,i)) indexes
+    len = bsLength str
+    parseWord' _ _ r@(NoParse _ _) = r
+    parseWord' bstr i (Parsed (a,b) ast layer)
+      | i >= len = Parsed (a,b) (Str (a,b)) layer
+      | otherwise =
+        let
+          (bpack, consumed) = consumeBits bstr i
+          ccode = bytePackToInt bpack
+          ly' = nextLayer layer
+          acc' = if compareCharCode layer ccode
+                   then Parsed (a,b + fromIntegral consumed) ast ly'
+                   else NoParse b ["ERR_OO1"]
+          !i' = i + fromIntegral consumed
+          ans = parseWord' bstr i' acc'
+        in 
+          ans
+
+parseTrivialTerm layer loc cond name =
+  let
+    trivialRng = (loc,loc)
+    x = unCode $ charCode layer
+    trivialParsed = Parsed trivialRng (Str trivialRng) (nextLayer layer)
+  in
+    if cond x
+    then trivialParsed
+    else NoParse loc [name]
+
+
+parseTerminal :: Layer -> Int -> Terminal' -> Result 
+parseTerminal layer loc term =
+  let
+    trivial = parseTrivialTerm layer loc
+  in
+  case term of
+    LitBS str  -> parseWord layer loc str
+    Lit w      -> trivial (w ==) "Lit"
+    Digit      -> trivial C.isDigit "Digit"
+    HexDigit   -> trivial C.isHexDigit "HexDigit"
+    Alpha      -> trivial C.isAlpha "Alpha"
+    AlphaLower -> trivial C.isAlphaLower "Alpha"
+    AlphaUpper -> trivial C.isAlphaUpper "Alpha"
+    AlphaDigit -> trivial C.isAlphaDigit "Alpha"
+    CR         -> trivial (C._cr ==) "Lit_CR"
+    LF         -> trivial (C._lf ==) "Lit_LF"
+    Dquote     -> trivial (C._quotedbl ==) "Lit_Dquote"
+    Tab        -> trivial (C._tab ==) "Lit_Tab"
+    SP         -> trivial (C._space ==) "Lit_SP"
+    Range (from,to) -> trivial (C.inRange (from,to)) "Lit_Range"
+    Specials     -> trivial C.isSpecial "Lit_Special"
+    TextSpecials -> trivial C.isTextSpecials "Lit_TextSpecials"
+
+type PEGRunner = Layer -> Int -> PEG -> Result
+
+locFromRange (_,b) = b + 1
+
+parseSequence :: Layer -> Int -> [PEG] -> PEGRunner -> Result
+parseSequence baseLayer baseLoc rules runPeg =
+  case ans of
+    Right (layer, loc, list) ->
+      let range = (baseLoc, loc - 1) in Parsed range (Seq range (reverse list)) layer
+    Left err -> err
+  where
+    ans = foldl' f (Right (baseLayer,baseLoc,[])) rules
+    -- use f = map f'
+    f (Right (layer,loc,list)) peg =
+      case runPeg layer loc peg of
+        Parsed range ast layer' -> Right (layer', locFromRange range, ast:list)
+        n -> Left n
+    f r _ = r
+
+parseChoice :: Layer -> Int -> [PEG] -> PEGRunner -> Result
+parseChoice layer loc rules runPeg =
+  case find isParsed (map (runPeg layer loc) rules) of
+    Just result -> result
+    Nothing -> NoParse loc ["ERR_003"]
+
+parseUntilCond :: Layer -> Int -> PEG -> (Int -> (Bool,Bool)) -> PEGRunner -> Result
+parseUntilCond bLayer bLoc rule cond runPeg = parseUntilCond' bLayer bLoc 0 []
+  where
+    resolve layer loc asts =
+      if asts == []
+      then voidParsed loc layer
+      else 
+        let range = (bLoc,loc - 1) in Parsed range (Seq range (reverse asts)) layer
+    parseUntilCond' layer loc counter asts =
+      let
+        (canParse,needParse) = cond counter
+      in
+      if isVoidLayer layer
+      then
+        if needParse
+        then NoParse loc ["ERR_006"]
+        else resolve layer loc asts
+      else
+        if canParse
+        then
+          case runPeg layer loc rule of
+            Parsed range ast layer' ->
+              parseUntilCond' layer' (locFromRange range) (counter + 1) (ast:asts)
+            NoParse loc' err ->
+              if needParse
+              then NoParse loc' (err ++ ["ERR_006"])
+              else resolve layer loc' asts
+        else resolve layer loc asts
+
+parse' :: Grammar -> BString -> (Layer, Map.Map B.ByteString Int)
+parse' grammar word =
+  let
+    --(index,name,peg)
+    indexes = L.zipWith (\i (name,rule) -> (i,name,rule)) [0..] grammar
+
+    -- Map RuleName Index
+    name2IndexMap = Map.fromList $ fmap (\(i,name,_) -> (name,i)) indexes
+
+    -- Vector RuleNAme
+    indexToNameVec = V.fromList $ fmap (\(_,name,_) -> name) indexes
+
+    -- Vector NonTerminal
     nonTerminalsVec
       = V.fromList
       $ fmap
-          (\(_,rule,_) -> remapNonTerminals name2IndexMap rule)
+          (\(_,_,peg) -> remapNonTerminals name2IndexMap peg)
           indexes
-    indexToNameVec = V.fromList $ fmap (\(name,_,_) -> name) indexes
 
-    parsePegNT = \layer index ->
+    -- Step 1
+    parsePegNT :: Layer -> Int -> Int -> Result
+    parsePegNT = \layer index loc ->
       case nonTerminalsVec V.!? index of
         Just peg' ->
-          case parsePEG layer peg' of
-            Parsed r ast l -> Parsed r (Rule r (indexToNameVec V.! index) ast) l
+          case parsePEG layer loc peg' of
+            Parsed r ast l -> Parsed r (Rule (indexToNameVec V.! index) r ast) l
             NoParse i list ->
               NoParse i (B.concat ["Rule ",indexToNameVec V.! index]:list)
         Nothing -> NoParse index [indexToNameVec V.! index]
 
     memoNonTerminalFrom layer index = memo layer V.! index
 
-    parseSequence baseIndex [] layer (asts,finalIndex) =
+    -- HELLO! Working HERE
+    parsePEG layer loc peg =
+      case traceShow ("calling",show peg,unCode $ charCode layer) peg of
+        Terminal term         -> parseTerminal layer loc term
+        NT index              -> memoNonTerminalFrom layer index
+        Many0 rule            -> parsePEG layer loc (ManyN 0 rule)
+        Many1 rule            -> parsePEG layer loc (ManyN 1 rule)
+        ManyN n rule          -> parseUntilCond layer loc rule (\i -> (True,i < n)) parsePEG
+        Many (minP,maxP) rule -> parseUntilCond layer loc rule (\i -> (i < maxP,i < minP)) parsePEG
+        Repeat n rule         -> parsePEG layer loc (Many (n,n) rule)
+        Sequence rules        -> parseSequence layer loc rules parsePEG
+        Choice rules          -> parseChoice layer loc rules parsePEG
+        Optional rule         -> parsePEG layer loc (Many (0,1) rule)
+        notImplemented        -> error $ "Not implemented => " ++ show notImplemented
+
+    maxLen = bsLength word
+    generateLayers loc =
       let
-        ast = Seq (baseIndex,finalIndex) $ P.reverse asts
+        !isReachedTheEnd = maxLen <= loc
+        voidMemo' = V.imap (\i _ -> parsePegNT (voidLayer voidMemo') i loc) nonTerminalsVec
       in
-        Parsed (baseIndex,finalIndex) ast layer
-    parseSequence baseIndex (peg:rs) layer (accAst,_) =
-      case parsePEG layer peg of
-        Parsed (_,b) ast layer' ->
-          parseSequence baseIndex rs layer' (ast:accAst,b)
-        other -> other
-
-    parseWord [] _ accIndex acc =
-      case acc of
-        Parsed (_,b) _ layer' ->
-          Parsed range (Str $ substr range word) layer'
-            where range = (accIndex,b)
-        other -> other
-    parseWord (w:ws) layer accIndex acc =
-      case parsePEG layer (Terminal $ Lit w) of
-        result@(Parsed (a,_) _ layer') ->
-          parseWord ws layer' (accIndex' a) result
-        other -> other
-      where
-        accIndex' index = if isParsed acc then accIndex else index
-
-    mapManyResult result start acc =
-      case result of
-        Parsed (_,end) cur layer' ->
-            Parsed (start,end) (Seq (start,end) (reverse (cur:acc))) layer'
-        r -> r
-
-    repeatPEGwithMax start peg max' count layer acc lastResult
-      | count >= max' = (count, mapManyResult lastResult start $ tail acc)
-      | otherwise =
-          case parsePEG layer peg of
-            result@(Parsed _ cur layer') ->
-              if isVoidLayer layer'
-              then (count + 1, mapManyResult result start acc)
-              else repeatPEGwithMax start peg max' (count + 1) layer' (cur:acc) result
-            NoParse _ errors -> (count,resultOrMergeErrors errors $ mapManyResult lastResult start $ tail acc)
-
-    repeatPEG start peg count layer acc lastResult =
-      case parsePEG layer peg of
-        result@(Parsed _ cur layer') ->
-          if isVoidLayer layer'
-          then (count + 1, mapManyResult result start acc)
-          else repeatPEG start peg (count + 1) layer' (cur:acc) result
-        NoParse _ errors -> (count,resultOrMergeErrors errors $ mapManyResult lastResult start $ tail acc)
-
-    parsePEG layer peg =
-      case char layer of
-        Parsed (a,_) ast layer' ->
-          case peg of
-            Choice pegs ->
-              case L.find isParsed $ fmap (parsePEG layer) pegs of
-                Just parsed -> parsed
-                Nothing -> NoParse a ["Choice"]
-            Optional peg' ->
-              if isVoid ast
-              then Parsed (a,a-1) Void layer
-              else
-                case parsePEG layer peg' of
-                  NoParse _ _ -> Parsed (a,a-1) Void layer
-                  result' -> result'
-            And peg' ->
-              case parsePEG layer peg' of
-                Parsed {} -> Parsed (a,a-1) Void layer 
-                other -> resultOrMergeErrors ["And"] other
-            Not peg' ->
-              case parsePEG layer peg' of
-                NoParse _ _ -> Parsed (a,a-1) Void layer 
-                _ -> NoParse a ["Not"]
-            Many' (min', maybeMax) peg' ->
-              if isVoid ast
-              then
-                if min' == 0
-                then Parsed (a,a-1) Void layer
-                else NoParse a ["Many","Void"]
-              else
-                case maybeMax of
-                  Just max' ->
-                    let
-                      (count, result) =
-                        repeatPEGwithMax a peg' max' 0 layer [] (NoParse a ["Many"])
-                    in
-                      if min' <= count && count <= max'
-                      then result
-                      else case result of
-                        NoParse i _ -> NoParse i ["Many"]
-                        Parsed (_,b) _ _ -> NoParse (b + 1) ["Many"]
-                  Nothing ->
-                    let
-                      (count, result) =
-                        repeatPEG a peg' 0 layer [] (NoParse a ["Many"])
-                      cursorIndex =
-                        case result of
-                          NoParse i _ -> i
-                          Parsed (_,b) _ _ -> b + 1
-                    in 
-                      if min' <= count
-                      then
-                        case result of
-                          NoParse _ errors ->
-                            if min' == 0
-                            then Parsed (a,a-1) Void layer
-                            else NoParse (a + count) ("Many":errors)
-                          result' -> result'
-                      else NoParse cursorIndex (extractErrors result)
-            Many0 peg' -> parsePEG layer $ Many' (0, Nothing) peg'
-            Many1 peg' -> parsePEG layer $ Many' (1, Nothing) peg'
-            ManyN n peg' -> parsePEG layer $ Many' (n, Nothing) peg'
-            Repeat n peg' -> parsePEG layer $ Many' (n, Just n) peg'
-            Many (min',max') peg' ->
-              parsePEG layer $ Many' (min', Just max') peg'
-            Terminal term ->
-              if isVoid ast then NoParse a ["Terminal","Void"]
-              else
-                let x = B.index word a in
-                case term of
-                  Lit w ->
-                    if x == w
-                    then Parsed (a,a) ast layer'
-                    else NoParse a ["Lit"]
-                  LitWord ws -> parseWord ws layer a (NoParse a ["LitWord"])
-                  LitBS ws ->
-                    parsePEG layer $ Terminal $ LitWord $ B.unpack ws
-                  Digit ->
-                    if W.isDigit x
-                    then Parsed (a,a) ast layer'
-                    else NoParse a ["Digit"]
-                  HexDigit ->
-                    if W.isHexDigit x
-                    then Parsed (a,a) ast layer'
-                    else NoParse a ["HexDigit"]
-                  Alpha ->
-                    if W.isAlpha x
-                    then Parsed (a,a) ast layer'
-                    else NoParse a ["Alpha"]
-                  AlphaLower ->
-                    if W.isLower x
-                    then Parsed (a,a) ast layer'
-                    else NoParse a ["AlphaLower"]
-                  AlphaUpper ->
-                    if W.isUpper x
-                    then Parsed (a,a) ast layer'
-                    else NoParse a ["AlphaUpper"]
-                  AlphaDigit ->
-                    if W.isAlphaNum x
-                    then Parsed (a,a) ast layer'
-                    else NoParse a ["AlphaDigit"]
-                  CR -> parsePEG layer $ Terminal $ Lit W._cr
-                  LF -> parsePEG layer $ Terminal $ Lit W._lf
-                  Dquote -> parsePEG layer $ Terminal $ Lit W._quotedbl
-                  Tab -> parsePEG layer $ Terminal $ Lit W._tab
-                  SP -> parsePEG layer $ Terminal $ Lit W._space
-                  Range (from,to) -> 
-                    if x >= from && x <= to
-                    then Parsed (a,a) ast layer'
-                    else NoParse a ["Range"]
-                  Specials ->
-                    if Set.member x specialsSet
-                    then Parsed (a,a) ast layer'
-                    else NoParse a ["Specials"]
-                  TextSpecials ->
-                    if Set.member x textSpecialsSet
-                    then Parsed (a,a) ast layer'
-                    else NoParse a ["TextSpecials"]
-            NT index -> memoNonTerminalFrom layer index
-            Cons pegA pegB ->
-              case parsePEG layer pegA of
-                Parsed (beg1,_) ast1 l ->
-                  case parsePEG l pegB of
-                    Parsed (_,end2) ast2 l' ->
-                      Parsed (beg1,end2) (Cons' (beg1,end2) ast1 ast2) l'
-                    other -> other
-                other -> other
-            Sequence rules -> parseSequence a rules layer ([],a-1)
-            notImplemented ->
-              error $ "Not implemented => " ++ show notImplemented
-        other -> other
-
-    parseRange (a,b) = layer
-      where
-        layer = Layer memo' chr
-        memo' = V.imap (\i _ -> parsePegNT layer i) nonTerminalsVec
-        chr | a < b = 
-                Parsed (a,a)
-                (Str $ B.singleton (B.index word a))
-                (parseRange (a + 1,b))
-            | otherwise =
-                if a == b
-                then Parsed (a,a) Void (parseRange (a + 1,b))
-                else NoParse a [] 
+        if isReachedTheEnd
+        then voidLayer voidMemo'
+        else
+          let 
+            memo' = V.imap (\i _ -> parsePegNT layer i loc) nonTerminalsVec
+            (bpack,consumed) = consumeBits word loc
+            !loc' = loc + fromIntegral consumed
+            !code = bytePackToInt bpack 
+            charCode' = CharCode code
+            nextLayer' = generateLayers loc'
+            layer = Layer charCode' memo' nextLayer'
+          in
+            layer
+  in
+    (generateLayers 0, name2IndexMap)
 
 parse :: Grammar -> RuleName -> B.ByteString -> ParsedResult
 parse grammar startRulename input =
-  case memo parsedResult V.!? startIndex of
-    Just k ->
-      case k of
-        result@(Parsed (_,end) _ _) ->
-          if end == B.length input - 1
-          then TotallyConsumed result
-          else PartiallyConsumed result
-        NoParse i' errors -> NotParsed i' errors
-    Nothing -> error "Trying to access an empty vector"
-  where
-    (parsedResult, rulename2indexMap) = parse' grammar input
+  let
+    (layer, rulename2indexMap) = parse' grammar input
     startIndex = case Map.lookup startRulename rulename2indexMap of
       Just index -> index
-      Nothing -> -1
-   
+      Nothing    -> -1
+    len = (B.length input - 1)
+  in
+    case memo layer V.!? startIndex of
+      Just k ->
+        case k of
+          result@(Parsed (_,end) _ _) ->
+            if end == len 
+            then TotallyConsumed result
+            else PartiallyConsumed result
+          NoParse i' errors -> NotParsed i' errors
+      Nothing -> error "Trying to access an empty vector"

@@ -1,10 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
-module BoringPackrat.Email (emailGrammar,parseEmail,checkEmail,emailAddress) where
+module BoringPackrat.Email (emailGrammar,parseEmail,parseEmail',checkEmail,emailAddress) where
 
 import BoringPackrat (
     Terminal'(..),
     PEG(..),
-    (#),
     Grammar,
     ParsedResult,
     parse,
@@ -25,7 +24,7 @@ emailAddress (Email localPart domain) = B8.concat [localPart,"@",domain]
 emailFrom :: B8.ByteString -> AST -> Maybe Email
 emailFrom input ast =
   case ast of
-    Rule _ "Email" (Seq _ [Rule rangeL _ _,_,Rule rangeD _ _]) -> 
+    Rule "Email" _ (Seq _ [Rule _ rangeL _,_,Rule _ rangeD _]) -> 
         let
           localPart = substr rangeL input 
           domain = substr rangeD input
@@ -89,23 +88,24 @@ emailGrammar
     -- Dot-string / Quoted-string
   , ("LocalPart", Choice [n"DotString", n"QuotedString"])
     -- sub-domain *("." sub-domain)
-  , ("Domain", n"Subdomain" # Many0 (_Dot # n"Subdomain"))
+  , ("Domain", Sequence[n"Subdomain", Many0 (Sequence[_Dot,n"Subdomain"])])
     -- (ALPHA / DIGIT) [*(ALPHA / DIGIT / "-") (ALPHA / DIGIT)]
     -- or (ALPHA / DIGIT) *(*("-") (ALPHA / DIGIT)) for PEGs
-  , ("Subdomain", _AlphaDigit # Many0 (Many0 _Hyphen # _AlphaDigit))
+  , ("Subdomain", Sequence[_AlphaDigit, Many0 (Sequence[Many0 _Hyphen, _AlphaDigit])])
   , ("AddressLiteral"
-    , _BracketLeft
-    # Choice [n"IPV4AddessLiteral", n"IPV6AddressLiteral", n"GeneralAddresLiteral"]
-    # _BracketRight
+    , Sequence [_BracketLeft
+               ,Choice [n"IPV4AddessLiteral", n"IPV6AddressLiteral", n"GeneralAddresLiteral"]
+               ,_BracketRight
+               ]
     )
     -- Snum 3("."  Snum)
-  , ("IPV4AddessLiteral", n"Snum" # Repeat 3 (n"Snum"))
+  , ("IPV4AddessLiteral", Sequence[n"Snum",Repeat 3 (n"Snum")])
     -- "IPv6:" IPv6-addr
-  , ("IPV6AddressLiteral", w"IPv6:" # n"IPv6Addr")
+  , ("IPV6AddressLiteral", Sequence[w"IPv6:", n"IPv6Addr"])
     -- Standardized-tag ":" 1*dcontent
-  , ("GeneralAddresLiteral", n"StandardizedTag" # _Colon # Many1 (n"Dcontent"))
+  , ("GeneralAddresLiteral", Sequence[n"StandardizedTag", _Colon, Many1 (n"Dcontent")])
     -- 0*(ALPHA / DIGIT / "-") (ALPHA / DIGIT)
-  , ("StandardizedTag", Many1 (Many0 _Hyphen # _AlphaDigit))
+  , ("StandardizedTag", Many1 (Sequence[Many0 _Hyphen, _AlphaDigit]))
     -- Printable US-ASCII, excl. "[", "\", "]"
   , ("Dcontent", Choice [rangeChar (33,90), rangeChar (94,126)])
     -- 1*3DIGIT
@@ -115,56 +115,62 @@ emailGrammar
     -- 1*4HEXDIG
   , ("IPv6Hex", Many (1,4) _HexDigit)
     -- IPv6-hex 7(":" IPv6-hex)
-  , ("IPv6Full", n"IPv6Hex" # Repeat 7 (_Colon # n"IPv6Hex"))
+  , ("IPv6Full", Sequence[n"IPv6Hex", Repeat 7 (Sequence[_Colon, n"IPv6Hex"])])
     -- [IPv6-hex *5(":" IPv6-hex)] "::" [IPv6-hex *5(":" IPv6-hex)]
     -- The "::" represents at least 2 16-bit groups of
     -- zeros.  No more than 6 groups in addition to the
     -- "::" may be present.
   , ("IPv6Comp"
-      , Optional (n"IPv6Hex" # Many (0, 5) (_Colon # n"IPv6Hex"))
-      # w"::"
-      # Optional (n"IPv6Hex" # Many (0, 5) (_Colon # n"IPv6Hex"))
+      , Sequence[Optional (Sequence[n"IPv6Hex", Many (0, 5) (Sequence[_Colon,n"IPv6Hex"])])
+                ,w"::"
+                ,Optional (Sequence[n"IPv6Hex", Many (0, 5) (Sequence[_Colon, n"IPv6Hex"])])
+                ]
     )
   -- IPv6-hex 5(":" IPv6-hex) ":" IPv4-address-literal
   , ("IPv6v4Full"
-    , n"IPv6Hex" # Repeat 5 (_Colon # n"IPv6Hex")
-    # _Colon
-    # n"IPV4AddessLiteral"
+    , Sequence[n"IPv6Hex"
+              , Repeat 5 (Sequence[_Colon, n"IPv6Hex"])
+              , _Colon
+              , n"IPV4AddessLiteral"
+              ]
     )
     -- Atom *("."  Atom)
-  , ("DotString", n"Atom" # Many0 (_Dot # n"Atom"))
+  , ("DotString",Sequence[n"Atom", Many0 (Sequence [_Dot, n"Atom"])])
     -- [IPv6-hex *3(":" IPv6-hex)] "::" [IPv6-hex *3(":" IPv6-hex) ":"] IPv4-address-literal
     -- The "::" represents at least 2 16-bit groups of
     -- zeros.  No more than 4 groups in addition to the
     -- "::" and IPv4-address-literal may be present.
   , ("IPv6v4Comp"
-    , Optional (n"IPv6Hex" # Many (0, 3) (_Colon # n"IPv6Hex"))
-    # w"::"
-    # Optional (n"IPv6Hex" # Many (0, 3) (_Colon # n"IPv6Hex") # _Colon)
-    # n"IPV4AddessLiteral"
+    , Sequence[Optional (Sequence[n"IPv6Hex", Many (0, 3) (Sequence[_Colon, n"IPv6Hex"])])
+              , w"::"
+              , Optional (Sequence[n"IPv6Hex", Many (0, 3) (Sequence[_Colon, n"IPv6Hex"]), _Colon])
+              , n"IPV4AddessLiteral"
+              ]
     )
     -- 1*atext
   , ("Atom", Many1 (n"Atext"))
     -- [CFWS] dot-atom-text [CFWS]
   , ("DotAtom"
-    , Optional (n"CFWS")
-    # n"DotAtomText"
-    # Optional (n"CFWS")
+    , Sequence[Optional (n"CFWS")
+              ,n"DotAtomText"
+              ,Optional (n"CFWS")
+              ]
     )
     -- 1*atext *("." 1*atext)
-  , ("DotAtomText", Many1 (n"Atext") # Many0 (_Dot # Many1 (n"Atext")))
+  , ("DotAtomText", Sequence[Many1 (n"Atext"), Many0 (Sequence[_Dot, Many1 (n"Atext")])])
   , ("Atext", Choice [_AlphaDigit, _TextSpecials])
     -- DQUOTE *QcontentSMTP DQUOTE
   , ("QuotedString"
-    , _Dquote
-    # Many0 (n"QcontentSMTP")
-    # _Dquote
+    , Sequence[_Dquote
+              ,Many0 (n"QcontentSMTP")
+              ,_Dquote
+              ]
     )
     -- qtextSMTP / quoted-pairSMTP
   , ("QcontentSMTP", Choice [n"QtextSMTP", n"QuotedPairSMTP"])
     -- backslash followed by any ASCII
     -- graphic (including itself) or SPace
-  , ("QuotedPairSMTP", _Backslash # rangeChar (32, 126))
+  , ("QuotedPairSMTP", Sequence[_Backslash, rangeChar (32, 126)])
 
     -- within a quoted string, any
     -- ASCII graphic or space is permitted
@@ -174,28 +180,30 @@ emailGrammar
     -- Printable ascii, not '\' '"'
   , ("Qtext", Choice [lit 33, rangeChar (35, 91), rangeChar (93, 126)])
     -- "\" (VCHAR / WSP)
-  , ("QuotedPair", _Backslash # Choice [_VCHAR,_WSP])
+  , ("QuotedPair", Sequence[_Backslash, Choice [_VCHAR,_WSP]])
     -- [CFWS] "[" *([FWS] dtext) [FWS] "]" [CFWS]
   , ("DomainLiteral"
-    , Optional (n"CFWS")
-    # _BracketLeft
-    # Many0 (Optional (n"FWS") # n"Dtext")
-    # Optional (n"FWS")
-    # _BracketRight
-    # Optional (n"CFWS")
+    , Sequence[ Optional (n"CFWS")
+              , _BracketLeft
+              , Many0 (Sequence[Optional (n"FWS"), n"Dtext"])
+              , Optional (n"FWS")
+              , _BracketRight
+              , Optional (n"CFWS")
+              ]
     )
     -- Printable ASCII chars, not '[' ']' '\'
   , ("Dtext", Choice [rangeChar (33,90), rangeChar (94,126)])
     --  (1*([FWS] comment) [FWS]) / FWS
-  , ("CFWS", Choice [Many1 (Optional (n"FWS") # n"Comment") # Optional (n"FWS"), n"FWS"])
+  , ("CFWS", Choice [Sequence[Many1 (Sequence[Optional (n"FWS"), n"Comment"]), Optional (n"FWS")], n"FWS"])
     -- [*WSP CRLF] 1*WSP
-  , ("FWS", Optional (Many0 _WSP # _CRLF) # Many1 _WSP)
+  , ("FWS", Sequence[Optional (Sequence[Many0 _WSP,_CRLF]), Many1 _WSP])
     -- "(" *([FWS] ccontent) [FWS] ")"
   , ("Comment"
-    , _BracketLeft
-    # Many0 (Optional (n"FWS") # n"Ccontent")
-    # Optional (n"FWS")
-    # _BraceRight
+    , Sequence[_BracketLeft
+              ,Many0 (Sequence[Optional (n"FWS"),n"Ccontent"])
+              ,Optional (n"FWS")
+              ,_BraceRight
+              ]
     )
     -- ctext / quoted-pair / comment
   , ("Ccontent", Choice [n"Ctext", n"QuotedPair", n"Comment"])

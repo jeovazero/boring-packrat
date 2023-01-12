@@ -31,24 +31,19 @@ prettyPrint' ident ignoreIdent input ast =
       P.putStrLn "\""
   in
   case ast of
-    Cons' range ast1 ast2 -> do
-      applyIdent'
-      P.putStr "Cons -> "
-      showInfo range
-      loopList input ":" (ident + padding) [ast1,ast2]
     Seq range asts -> do
       applyIdent'
       P.putStr "Sequence -> "
       showInfo range
       loopList input "-" (ident + padding) asts
-    Rule range name ast' -> do
+    Rule name range ast' -> do
       applyIdent'
       B8.putStr $ B8.concat ["Rule ",name," -> "]
       showInfo range
       prettyPrint' (ident + padding) False input ast'
-    Str value -> do
+    Str range -> do
       applyIdent'
-      P.putStrLn ("Str " ++ show value)
+      showInfo range
     Void -> do
       P.putStrLn "*"
 
