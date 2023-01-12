@@ -23,16 +23,13 @@ module BoringPackrat2 (
 
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as B8
-import Data.Word (Word8)
 import qualified Data.Map as Map
 import Data.List as L
 import Data.Int
-import qualified Data.Word8 as W
 import qualified Data.Vector as V
-import qualified Data.Set as Set
 import Prelude as P
 import BoringPackrat.Bits
-import Data.Maybe
+import BoringPackrat.Chars as C
 import Debug.Trace
 
 data PEG
@@ -41,7 +38,6 @@ data PEG
   | Many1 PEG
   | ManyN Int PEG
   | Many (Int,Int) PEG
-  | Many' (Int, Maybe Int) PEG
   | Repeat Int PEG -- alias for `Many (n, n) PEG`
   | Choice [PEG]
   | Optional PEG
@@ -54,7 +50,6 @@ data PEG
 
 data Terminal'
   = Lit Int32
-  | LitWord [Word8]
   | LitBS BString
   | Range (Int32,Int32)
   | Alpha
@@ -72,49 +67,6 @@ data Terminal'
   | SP -- space
   deriving (Show)
    
-specials, textSpecials :: [Word8]
-specials
-  = [ W._parenleft    -- '('
-    , W._parenright   -- ')'
-    , W._less         -- '<'
-    , W._greater      -- '>'
-    , W._bracketleft  -- '['
-    , W._bracketright -- ']'
-    , W._colon        -- ':'
-    , W._semicolon    -- ';'
-    , W._at           -- '@'
-    , W._backslash    -- '\\'
-    , W._comma        -- ','
-    , W._period       -- '.'
-    , W._quotedbl     -- '"'
-    ]
-
-textSpecials
-  = [ W._exclam      -- '!'
-    , W._numbersign  -- '#'
-    , W._dollar      -- '$'
-    , W._percent     -- '%'
-    , W._ampersand   -- '&'
-    , W._quotesingle -- '\''
-    , W._asterisk    -- '*'
-    , W._plus        -- '+'
-    , W._hyphen      -- '-'
-    , W._slash       -- '/'
-    , W._equal       -- '='
-    , W._question    -- '?'
-    , W._circum      -- '^'
-    , W._underscore  -- '_'
-    , W._grave       -- '`'
-    , W._braceleft   -- '{'
-    , W._braceright  -- '}'
-    , W._bar         -- '|'
-    , W._tilde       -- '~'
-    ]
-
-specialsSet, textSpecialsSet :: Set.Set Word8
-specialsSet = Set.fromList specials
-textSpecialsSet = Set.fromList textSpecials
-
 type RuleName = B.ByteString
 type GrammarRule = (RuleName,PEG)
 type Grammar = [GrammarRule]
@@ -158,7 +110,10 @@ voidCharCode = CharCode 0
 
 isVoidLayer (Layer c _ _) = isVoidCharCode c
 
-voidLayer = Layer voidCharCode undefined voidLayer
+voidLayer m = Layer voidCharCode m (voidLayer m)
+
+compareCharCode (Layer c _ _) code = unCode c == code
+w8CharCode (Layer c _ _) w8code = fromIntegral $ unCode c
 
 isVoidCharCode (CharCode 0) = True
 isVoidCharCode _ = False
@@ -207,7 +162,6 @@ remapNonTerminals name2IndexMap peg =
     Many1 peg' -> Many1 $ remap peg'
     ManyN int peg' -> ManyN int $ remap peg'
     Many range peg' -> Many range $ remap peg'
-    Many' range peg' -> Many' range $ remap peg'
     Repeat int peg' -> Repeat int $ remap peg'
     Optional peg' -> Optional $ remap peg'
     And peg' -> And $ remap peg'
@@ -232,25 +186,58 @@ substr (a,b) = B.take (b - a + 1) . B.drop a
 
 voidParsed a = let !b = a - 1 in Parsed (a,b) Void
 
-parseWord layer loc str = parseWord' str 0 (voidParsed loc layer)
+parseWord bLayer loc str = parseWord' str 0 (voidParsed loc bLayer)
   where
     len = bsLength str
     parseWord' _ _ r@(NoParse _ _) = r
-    parseWord' bstr i (Parsed (a,b) ast ly)
-      | i >= len = Parsed (a,b) (Str (a,b)) ly
+    parseWord' bstr i (Parsed (a,b) ast layer)
+      | i >= len = Parsed (a,b) (Str (a,b)) layer
       | otherwise =
         let
           (bpack, consumed) = consumeBits bstr i
           ccode = bytePackToInt bpack
-          lycode = unCode $ charCode ly
-          ly' = nextLayer ly
-          acc' = if ccode == lycode
-                   then Parsed (a,b + fromIntegral consumed - 1) ast ly'
+          ly' = nextLayer layer
+          acc' = if compareCharCode layer ccode
+                   then Parsed (a,b + fromIntegral consumed) ast ly'
                    else NoParse b ["ERR_OO1"]
-          !i' = i + 1
+          !i' = i + fromIntegral consumed
           ans = parseWord' bstr i' acc'
         in 
           ans
+
+parseTrivialTerm layer loc cond name =
+  let
+    trivialRng = (loc,loc)
+    x = unCode $ charCode layer
+    trivialParsed = Parsed trivialRng (Str trivialRng) (nextLayer layer)
+  in
+    if cond x
+    then trivialParsed
+    else NoParse loc [name]
+
+
+parseTerminal :: Layer -> Int -> Terminal' -> Result 
+parseTerminal layer loc term =
+  let
+    trivial = parseTrivialTerm layer loc
+  in
+  case term of
+    LitBS str  -> parseWord layer loc str
+    Lit w      -> trivial (w ==) "Lit"
+    Digit      -> trivial C.isDigit "Digit"
+    HexDigit   -> trivial C.isHexDigit "HexDigit"
+    Alpha      -> trivial C.isAlpha "Alpha"
+    AlphaLower -> trivial C.isAlphaLower "Alpha"
+    AlphaUpper -> trivial C.isAlphaLower "Alpha"
+    AlphaDigit -> trivial C.isAlphaLower "Alpha"
+    CR         -> trivial (C._cr ==) "Lit_CR"
+    LF         -> trivial (C._lf ==) "Lit_LF"
+    Dquote     -> trivial (C._quotedbl ==) "Lit_Dquote"
+    Tab        -> trivial (C._tab ==) "Lit_Tab"
+    SP         -> trivial (C._space ==) "Lit_SP"
+    Range (from,to) -> trivial (C.inRange (from,to)) "Lit_Range"
+    Specials     -> trivial C.isSpecial "Lit_Special"
+    TextSpecials -> trivial C.isTextSpecials "Lit_TextSpecials"
 
 type PEGRunner = Layer -> Int -> PEG -> Result
 
@@ -277,19 +264,34 @@ parseChoice layer loc rules runPeg =
     Just result -> result
     Nothing -> NoParse loc ["ERR_003"]
 
-parseMany :: Layer -> Int -> PEG -> PEGRunner -> Result
-parseMany layer loc rule runPeg =
-  let
-    (asts,layer',loc') = parseMany' [] layer loc rule runPeg
-  in
-  if null asts
-  then voidParsed loc layer'
-  else let range = (loc,loc') in Parsed range (Seq range (reverse asts)) layer'
-
-parseMany' asts layer loc rule runPeg =
-  case runPeg layer loc rule of
-    NoParse _ _ -> (asts,layer,loc)
-    Parsed range ast layer' -> parseMany' (ast:asts) layer' (locFromRange range) rule runPeg
+parseUntilCond :: Layer -> Int -> PEG -> (Int -> (Bool,Bool)) -> PEGRunner -> Result
+parseUntilCond bLayer bLoc rule cond runPeg = parseUntilCond' bLayer bLoc 0 []
+  where
+    resolve layer loc asts =
+      if asts == []
+      then voidParsed loc layer
+      else 
+        let range = (bLoc,loc - 1) in Parsed range (Seq range (reverse asts)) layer
+    parseUntilCond' layer loc counter asts =
+      let
+        (canParse,needParse) = cond counter
+      in
+      if isVoidLayer layer
+      then
+        if needParse
+        then NoParse loc ["ERR_006"]
+        else resolve layer loc asts
+      else
+        if canParse
+        then
+          case runPeg layer loc rule of
+            Parsed range ast layer' ->
+              parseUntilCond' layer' (locFromRange range) (counter + 1) (ast:asts)
+            NoParse loc' err ->
+              if needParse
+              then NoParse loc' (err ++ ["ERR_006"])
+              else resolve layer loc' asts
+        else resolve layer loc asts
 
 parse' :: Grammar -> BString -> (Layer, Map.Map B.ByteString Int)
 parse' grammar word =
@@ -325,35 +327,38 @@ parse' grammar word =
 
     -- HELLO! Working HERE
     parsePEG layer loc peg =
-      case peg of
-        Terminal term  ->
-          case term of
-            LitBS str -> parseWord layer loc str
-            _         -> undefined
-        Many0 rule     -> parseMany layer loc rule parsePEG
-        NT index       -> memoNonTerminalFrom layer index
-        Sequence rules -> parseSequence layer loc rules parsePEG
-        Choice rules   -> parseChoice layer loc rules parsePEG
-        notImplemented -> error $ "Not implemented => " ++ show notImplemented
+      case traceShow ("calling",show peg) peg of
+        Terminal term         -> parseTerminal layer loc term
+        NT index              -> memoNonTerminalFrom layer index
+        Many0 rule            -> parsePEG layer loc (ManyN 0 rule)
+        Many1 rule            -> parsePEG layer loc (ManyN 1 rule)
+        ManyN n rule          -> parseUntilCond layer loc rule (\i -> (True,i < n)) parsePEG
+        Many (minP,maxP) rule -> parseUntilCond layer loc rule (\i -> (i < maxP,i < minP)) parsePEG
+        Repeat n rule         -> parsePEG layer loc (Many (n,n) rule)
+        Sequence rules        -> parseSequence layer loc rules parsePEG
+        Choice rules          -> parseChoice layer loc rules parsePEG
+        Optional rule         -> parsePEG layer loc (Many (0,1) rule)
+        notImplemented        -> error $ "Not implemented => " ++ show notImplemented
 
+    maxLen = bsLength word
     generateLayers loc =
       let
-        isReachedTheEnd = bsLength word <= loc
-
-        memo' = V.imap (\i _ -> parsePegNT layer i loc) nonTerminalsVec
-        (bpack,consumed) = consumeBits word loc
-        
-        !loc' = loc + fromIntegral consumed
-
-        !code = bytePackToInt bpack 
-
-        charCode' = CharCode code
-        
-        nextLayer' = generateLayers loc'
-
-        layer = Layer charCode' memo' nextLayer'
+        !isReachedTheEnd = maxLen <= loc
+        voidMemo' = V.imap (\i _ -> parsePegNT (voidLayer voidMemo') i loc) nonTerminalsVec
       in
-        if isReachedTheEnd then voidLayer else layer
+        if isReachedTheEnd
+        then voidLayer voidMemo'
+        else
+          let 
+            memo' = V.imap (\i _ -> parsePegNT layer i loc) nonTerminalsVec
+            (bpack,consumed) = consumeBits word loc
+            !loc' = loc + fromIntegral consumed
+            !code = bytePackToInt bpack 
+            charCode' = CharCode code
+            nextLayer' = generateLayers loc'
+            layer = Layer charCode' memo' nextLayer'
+          in
+            layer
   in
     (generateLayers 0, name2IndexMap)
 
@@ -364,12 +369,13 @@ parse grammar startRulename input =
     startIndex = case Map.lookup startRulename rulename2indexMap of
       Just index -> index
       Nothing    -> -1
+    len = (B.length input - 1)
   in
     case memo layer V.!? startIndex of
       Just k ->
         case k of
           result@(Parsed (_,end) _ _) ->
-            if end == B.length input - 1
+            if end == len 
             then TotallyConsumed result
             else PartiallyConsumed result
           NoParse i' errors -> NotParsed i' errors

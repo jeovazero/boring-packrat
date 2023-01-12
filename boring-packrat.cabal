@@ -41,6 +41,7 @@ library
                        BoringPackrat.Email,
                        BoringPackrat.Terminals,
                        BoringPackrat.Bits,
+                       BoringPackrat.Chars,
                        BoringPackrat.PrettyPrint,
                        BoringPackrat2
   build-depends:       containers,
