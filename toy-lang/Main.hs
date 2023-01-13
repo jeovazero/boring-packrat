@@ -9,25 +9,26 @@ import BoringPackrat (
     substr
   )
 import BoringPackrat.Terminals
-import qualified Data.Word8 as W
+import qualified BoringPackrat.Chars as C
 import qualified Data.ByteString.Char8 as B8
 import Data.Maybe (fromJust)
 import Text.Pretty.Simple (pPrint)
 -- import BoringPackrat.PrettyPrint (prettyPrint)
 import Debug.Trace
+import BoringPackrat.PrettyPrint (prettyPrint)
 --
 type BString = B8.ByteString
 
 n = NonTerminal
-_ParenLeft  = Terminal $ Lit W._parenleft  -- '('
-_ParenRight = Terminal $ Lit W._parenright -- ')'
-_Times      = Terminal $ Lit W._asterisk   -- '*'
-_Plus       = Terminal $ Lit W._plus       -- '+'
-_Minus      = Terminal $ Lit W._hyphen     -- '-'
-_Apostrofe  = Terminal $ Lit W._quotesingle -- "'" 
-_Underscore = Terminal $ Lit W._underscore -- "'" 
-_Equal      = Terminal $ Lit W._equal
-_Comma      = Terminal $ Lit W._comma
+_ParenLeft  = Terminal $ Lit C._parenleft  -- '('
+_ParenRight = Terminal $ Lit C._parenright -- ')'
+_Times      = Terminal $ Lit C._asterisk   -- '*'
+_Plus       = Terminal $ Lit C._plus       -- '+'
+_Minus      = Terminal $ Lit C._hyphen     -- '-'
+_Apostrofe  = Terminal $ Lit C._quotesingle -- "'" 
+_Underscore = Terminal $ Lit C._underscore -- "'" 
+_Equal      = Terminal $ Lit C._equal
+_Comma      = Terminal $ Lit C._comma
 _Lower      = Terminal AlphaLower
 _Upper      = Terminal AlphaUpper
 _Lf         = Choice [_WSP, _CRLF, _CR, _LF]
@@ -98,10 +99,10 @@ mainGrammar =
   , ("d_params", Choice [n"identifier", n"d_identifier"])
   , ("expr", Choice [n"aritm_expr", n"alt_expr"])
   , ("aritm_expr", Sequence [n"alt_expr", n"_lf", n"bin_op", n"_lf", n"expr"])
-  , ("alt_expr", Choice [n"parens", n"case_expr", n"guard_expr", n"let_expr", n"decimal", n"data", n"call", n"lambda"])
+  , ("alt_expr", Choice [n"parens", n"case_expr", n"guard_expr", n"let_expr", n"decimal", n"data", n"call", n"lambda", n"identifier"])
   , ("lambda", Sequence [litBS "\\", n"identifier", n"_lf", n"r_arrow", n"_lf", n"expr"])
   , ("call", Sequence [n"identifier", n"args"])
-  , ("args", Many0 $ Sequence [n"__", n"arg"])
+  , ("args", Many1 $ Sequence [n"__", n"arg"])
   , ("arg", Choice [n"decimal", n"parens", n"identifier"])
   , ("parens", Sequence [_ParenLeft,n"_",n"expr",n"_", _ParenRight])
   , ("data", Sequence [n"d_identifier", n"exprs"])
@@ -112,8 +113,7 @@ mainGrammar =
   , ("guard_expr", Sequence [n"guard", n"guard_sts"])
   , ("guard_sts", Many1 $ Sequence [n"_lf", n"sep", n"__", n"expr", n"_lf", n"r_arrow", n"_lf", n"expr"])
   , ("case_expr", Sequence [n"case",n"__",n"expr",n"case_sts"])
-  , ("case_sts", Many1 $ Sequence [n"_lf", n"sep", n"__", n"pattern_ws", n"_lf", n"r_arrow", n"_lf", n"expr"])
-  , ("pattern_ws", Sequence [n"_",n"pattern", n"_"])
+  , ("case_sts", Many1 $ Sequence [n"_lf", n"sep", n"__", n"pattern", n"_lf", n"r_arrow", n"_lf", n"expr"])
   , ("pattern", Choice [n"hole", n"decimal", n"d_pattern"])
   , ("d_pattern", Sequence [n"d_identifier", n"patterns"])
   , ("patterns", Many0 $ Sequence [n"__", n"pattern"])
@@ -130,25 +130,25 @@ grammar =
     , symbolsGrammar
     ]
 
-unRule a (Rule _ a' r)
+unRule a (Rule a' _ r)
  | a == a' = r
  | otherwise = error . show $ B8.concat ["unRule ", a, " and ", a']
 
 unSeq f (Seq _ a) = f a
 unSeq f Void = f []
 
-ruleToB8 input (Rule r _ _) = substr r input
+ruleToB8 input (Rule _ r _) = substr r input
 
 transformAST s ast =
   case ast of
-    Rule _ "program" (Seq _ decls) ->
+    Rule "program" _ (Seq _ decls) ->
         Program $ fmap (fromDeclslf s) decls
 
 fromDeclslf s decls =
   let decs = unRule "decls" . unSeq (\[_,d,_] -> d) . unRule "decls_lf" $ decls
    in case decs of
-        Rule _ "decls_expr" r -> toDexpr s r
-        Rule _ "decls_dt" r -> Ddata r
+        Rule "decls_expr" _ r -> toDexpr s r
+        Rule "decls_dt" _ r -> Ddata r
         f -> error (show f)
 
 toDexpr s dec =
@@ -168,34 +168,62 @@ toParams s rule =
   
 toExpr s rule =
   case (unRule "expr" rule) of
-    Rule _ "alt_expr" r -> toAltExpr s r
-    Rule _ "aritm_expr" r -> toAritmExpr s r
+    Rule "alt_expr" _ r -> toAltExpr s r
+    Rule "aritm_expr" _ r -> toAritmExpr s r
 
 toAltExpr s rule =
   case rule of
-    Rule _ "parens" (Seq _ [_,_,p,_,_]) -> toExpr s p
-    Rule _ "case_expr" p -> toCase s p
-    Rule _ "guard_expr" p -> GuardExpr $ s p
-    Rule _ "let_expr" (Seq _ [_,_,decl,decls,_,_,_,expr]) ->
+    Rule "parens" _ (Seq _ [_,_,p,_,_]) -> toExpr s p
+    Rule "case_expr" _ p -> toCaseExpr s p
+    Rule "guard_expr" _ p -> toGuardExpr s p
+    Rule "let_expr" _ (Seq _ [_,_,decl,decls,_,_,_,expr]) ->
       let d = toDexpr s $ unRule "decls_expr" decl
           ds = fromDeclsExprs s decls
           decs = d:ds
         in
       LetExpr decs (toExpr s expr)
-    Rule _ "decimal" d -> Decimal $ s d
-    Rule _ "data" p -> error $ show p
-    Rule _ "call" p -> toCall s p
-    Rule _ "lambda" p -> error $ show p
-    e -> error $ show (s rule) ++ " \n " ++ show e
+    Rule "decimal" _ d -> Decimal $ s d
+    Rule "data" _ p -> error $ show p
+    Rule "call" _ p -> toCall s p
+    Rule "identifier" _ p -> Identifier . Id $ s p
+    Rule "lambda" _ p -> error $ show p
+    e -> error $ "At -> " ++ show (s rule) ++ " \n " ++ show e
 
-toCase s rule =
+toGuardExpr s rule =
+  case rule of
+    Seq _ [_,guardSts] -> GuardExpr (toGuardSts s guardSts)
+
+toGuardSts s rule =
+  case (unRule "guard_sts" rule) of
+    Seq _ sts ->
+      fmap (\(Seq _ [_,_,_,exprCond,_,_,_,exprOut]) -> (toExpr s exprCond, toExpr s exprOut)) sts
+    Void  -> []
+
+
+toCaseExpr s rule =
   case rule of
     Seq _ [_,_,expr,casests] -> CaseExpr (toExpr s expr) (toCaseSts s casests)
 
 toCaseSts s rule =
   case (unRule "case_sts" rule) of
-    Seq _ [] -> undefined
+    Seq _ sts ->
+      fmap (\(Seq _ [_,_,_,patWs,_,_,_,expr]) -> (toPattern s patWs, toExpr s expr))sts
     Void  -> []
+
+toPattern s rule =
+  case (unRule "pattern" rule) of
+    Rule "hole" _ _ -> PHole
+    Rule "decimal" _ d -> PDecimal (s d)
+    Rule "d_pattern" _ (Seq _ [dId,patterns]) -> PData (Id $ s dId) (toPatterns s patterns)
+
+toPatterns s rule =
+  let
+    toPat r =
+      case r of
+        Seq _ [_, pat] -> toPattern s pat
+    result = unSeq (fmap toPat) $ unRule "patterns" rule
+  in
+    result
 
 fromDeclsExprs s rule =
   case (unRule "decls_exprs" rule) of
@@ -209,15 +237,15 @@ toAritmExpr s rule =
 
 toCall s rule =
   case rule of
-    Seq _ [id, Rule _ "args" (Seq _ args)] ->
+    Seq _ [id, Rule "args" _ (Seq _ args)] ->
       Call (Id $ s id) (fmap (Arg . toAltExpr s . unRule "arg" . unSeq (\[_, a] -> a)) args)
-    Seq _ [id, Rule _ "args" Void] ->
+    Seq _ [id, Rule "args" _ Void] ->
       Call (Id $ s id) []
     a -> error $ show a
 
 makeSubtr input r =
   case r of
-    Rule a _ _ -> substr a input
+    Rule _ a _ -> substr a input
     Seq a _ -> substr a input
 
 program input = do
@@ -225,6 +253,7 @@ program input = do
   let result = parse grammar "program" input
   -- print $ result
   let ast = fromJust $ astFrom result
+  -- prettyPrint input ast
   let s = makeSubtr input
   pPrint $ transformAST s ast
 
@@ -239,11 +268,12 @@ newtype Id = Id BString deriving (Show,Eq)
 newtype Param = Param BString deriving (Show,Eq)
 data Expr
   = CaseExpr Expr [(Pattern, Expr)]
-  | GuardExpr Expr [(Expr,Expr)]
+  | GuardExpr [(Expr,Expr)]
   | LetExpr [Decls] Expr
   | Decimal BString
   | EData BString [Expr]
   | Call Id [Arg] 
+  | Identifier Id
   | Lambda Id Expr
   | AritmExpr Expr BinOp Expr
   deriving (Show,Eq)
@@ -261,7 +291,9 @@ main = do
             --, "fat' a acc = acc"
             --, "fat' n acc = fat' (n - 1) (n * acc)"
             -- "r = let x = 1 + 2, y = 2 in x - y + x - y + x + x",
-            "x = case z | True -> a b | False -> b + 2"
+            -- "x = case z | True -> a b | False -> b + 2"
+            -- "x = a b"
+            "x = guard | x == a + b -> c + 2 + c | x == 2 -> 5"
             ]
 
   {-
