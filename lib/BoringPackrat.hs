@@ -186,22 +186,24 @@ substr (a,b) = B.take (b - a + 1) . B.drop a
 
 voidParsed a = let !b = a - 1 in Parsed (a,b) Void
 
-parseWord bLayer loc str = parseWord' str 0 (voidParsed loc bLayer)
+parseWord bLayer loc str = parseWord' str 0 loc (voidParsed loc bLayer)
   where
     len = bsLength str
-    parseWord' _ _ r@(NoParse _ _) = r
-    parseWord' bstr i (Parsed (a,b) ast layer)
+    parseWord' _ _ _ r@(NoParse _ _) = r
+    parseWord' bstr i cLoc (Parsed (a,b) ast layer)
       | i >= len = Parsed (a,b) (Str (a,b)) layer
       | otherwise =
         let
           (bpack, consumed) = consumeBits bstr i
           ccode = bytePackToInt bpack
           ly' = nextLayer layer
+          !b' = cLoc + fromIntegral consumed - 1
           acc' = if compareCharCode layer ccode
-                   then Parsed (a,b + fromIntegral consumed) ast ly'
-                   else NoParse b ["ERR_OO1"]
+                   then Parsed (a,b') ast ly'
+                   else NoParse cLoc ["ERR_OO1"]
           !i' = i + fromIntegral consumed
-          ans = parseWord' bstr i' acc'
+          !cLoc' = cLoc + 1
+          ans = parseWord' bstr i' cLoc' acc'
         in 
           ans
 
@@ -263,6 +265,12 @@ parseChoice layer loc rules runPeg =
   case find isParsed (map (runPeg layer loc) rules) of
     Just result -> result
     Nothing -> NoParse loc ["ERR_003"]
+
+parseOptional :: Layer -> Int -> PEG -> PEGRunner -> Result
+parseOptional layer loc rule runPeg =
+  case runPeg layer loc rule of
+    p@Parsed {} -> p
+    NoParse loc' _ -> voidParsed loc' layer
 
 parseUntilCond :: Layer -> Int -> PEG -> (Int -> (Bool,Bool)) -> PEGRunner -> Result
 parseUntilCond bLayer bLoc rule cond runPeg = parseUntilCond' bLayer bLoc 0 []
@@ -327,7 +335,7 @@ parse' grammar word =
 
     -- HELLO! Working HERE
     parsePEG layer loc peg =
-      case traceShow ("calling",show peg,unCode $ charCode layer) peg of
+      case peg of
         Terminal term         -> parseTerminal layer loc term
         NT index              -> memoNonTerminalFrom layer index
         Many0 rule            -> parsePEG layer loc (ManyN 0 rule)
@@ -337,7 +345,7 @@ parse' grammar word =
         Repeat n rule         -> parsePEG layer loc (Many (n,n) rule)
         Sequence rules        -> parseSequence layer loc rules parsePEG
         Choice rules          -> parseChoice layer loc rules parsePEG
-        Optional rule         -> parsePEG layer loc (Many (0,1) rule)
+        Optional rule         -> parseOptional layer loc rule parsePEG
         notImplemented        -> error $ "Not implemented => " ++ show notImplemented
 
     maxLen = bsLength word

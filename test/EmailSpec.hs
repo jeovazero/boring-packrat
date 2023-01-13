@@ -47,9 +47,7 @@ spec = do
    mapM_ (
       \valid ->
         it (B8.unpack valid) $ do
-          B8.putStr "--   "
           print $ parseEmail valid
-          B8.putStr "--  "
           valid `shouldSatisfy` checkEmail 
     ) valids
 
