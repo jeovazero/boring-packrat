@@ -194,7 +194,7 @@ toCase s rule =
 
 toCaseSts s rule =
   case (unRule "case_sts" rule) of
-    Seq _ [     ] ->
+    Seq _ [] -> undefined
     Void  -> []
 
 fromDeclsExprs s rule =
