@@ -15,6 +15,7 @@ type BString = B.ByteString
 
 bsIndex = B.index
 bsFromString = BU.fromString
+bsToString = BU.toString
 bsLength = B.length
 
 -------------------------------------------------------------------------------
