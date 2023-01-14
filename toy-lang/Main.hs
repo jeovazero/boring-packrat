@@ -16,6 +16,7 @@ import Text.Pretty.Simple (pPrint)
 -- import BoringPackrat.PrettyPrint (prettyPrint)
 import Debug.Trace
 import BoringPackrat.PrettyPrint (prettyPrint)
+import Data.List as L
 --
 type BString = B8.ByteString
 
@@ -92,20 +93,22 @@ mainGrammar =
   , ("decls_lf", Sequence [n"_lf", n"decls", n"_lf"])
   , ("decls", Choice [n"decls_expr", n"decls_dt"])
   , ("decls_expr", Sequence [n"identifier", n"params", n"_lf", n"equal", n"_lf", n"expr" ])
-  , ("decls_dt", Sequence [n"data", n"_", n"datatype", n"_lf", n"datatype_inst"])
+  , ("decls_dt", Sequence [n"data", n"_", n"datatype", n"_lf", n"equal", n"_lf", n"datatype_spec", n"datatype_specs"])
   , ("params", Many0 $ Sequence [n"__", n"identifier"])
   , ("datatype",Sequence [n"d_identifier", n"params"])
-  , ("datatype_inst",Sequence [n"d_identifier", n"d_params"])
-  , ("d_params", Choice [n"identifier", n"d_identifier"])
+  , ("datatype_specs", Many0 $ Sequence [n"_lf", n"sep", n"_", n"datatype_spec"])
+  , ("datatype_spec",Sequence [n"d_identifier", n"d_params"])
+  , ("d_param", Choice [n"identifier", n"d_identifier"])
+  , ("d_params", Many0 $ Sequence [n"__", n"d_param"])
   , ("expr", Choice [n"aritm_expr", n"alt_expr"])
   , ("aritm_expr", Sequence [n"alt_expr", n"_lf", n"bin_op", n"_lf", n"expr"])
-  , ("alt_expr", Choice [n"parens", n"case_expr", n"guard_expr", n"let_expr", n"decimal", n"data", n"call", n"lambda", n"identifier"])
+  , ("alt_expr", Choice [n"parens", n"case_expr", n"guard_expr", n"let_expr", n"decimal", n"data_expr", n"call", n"lambda", n"identifier"])
   , ("lambda", Sequence [litBS "\\", n"identifier", n"_lf", n"r_arrow", n"_lf", n"expr"])
   , ("call", Sequence [n"identifier", n"args"])
   , ("args", Many1 $ Sequence [n"__", n"arg"])
   , ("arg", Choice [n"decimal", n"parens", n"identifier"])
   , ("parens", Sequence [_ParenLeft,n"_",n"expr",n"_", _ParenRight])
-  , ("data", Sequence [n"d_identifier", n"exprs"])
+  , ("data_expr", Sequence [n"d_identifier", n"exprs"])
   , ("exprs", Many0 $ Sequence [n"__", n"expr"])
   , ("let_expr", Sequence [n"let", n"__lf", n"decls_expr", n"decls_exprs",n"__lf", n"in", n"__lf", n"expr"])
   , ("decls_exprs", Many0 $ Sequence [n"sep_let", n"decls_expr"])
@@ -148,13 +151,49 @@ fromDeclslf s decls =
   let decs = unRule "decls" . unSeq (\[_,d,_] -> d) . unRule "decls_lf" $ decls
    in case decs of
         Rule "decls_expr" _ r -> toDexpr s r
-        Rule "decls_dt" _ r -> Ddata r
+        Rule "decls_dt" _ r -> toDdata s r
         f -> error (show f)
+
+toDdata s r =
+  case r of
+    Seq _ [_,_,datatp,_,_,_,dataspec,dataspecs] ->
+     let
+       dspecs = (toDataSpec s dataspec):(toDataSpecs s dataspecs)
+       (Seq _ [identifier,params]) = unRule "datatype" datatp
+     in Ddata (UpperId $ s identifier) (toParams s params) dspecs
+    Seq _ a -> error $ L.intercalate  "\n\n" (fmap show a) 
+    a -> error $ show a
+
+toDataSpec s r =
+  case (unRule "datatype_spec" r) of
+    Seq _ [did,dparams] -> DataSpec (UpperId $ s did) (toDParams s dparams)
+
+toDataSpecs s rule =
+  let
+    toDSpec r =
+      case r of
+        Seq _ [_,_,_,param] -> toDataSpec s param
+    r = unSeq (fmap toDSpec) $ unRule "datatype_specs" rule
+  in
+    r
+
+toDParams s rule =
+  let
+    toDParam r =
+      case r of
+        Seq _ [_, param] ->
+          case unRule "d_param" param of
+            Rule "identifier" _ a -> LId . LowerId $ s a
+            Rule "d_identifier" _ a -> UId . UpperId $ s a
+            a -> error $ show a
+    r = unSeq (fmap toDParam) $ unRule "d_params" rule
+  in
+    r
 
 toDexpr s dec =
   case dec of
     Seq _ [identifier, params, _, equal, _, expr] ->
-      Dexpr (Id $ s identifier) (toParams s params) (toExpr s expr)
+      Dexpr (LowerId $ s identifier) (toParams s params) (toExpr s expr)
     a -> error $ show a
 
 toParams s rule =
@@ -183,11 +222,29 @@ toAltExpr s rule =
         in
       LetExpr decs (toExpr s expr)
     Rule "decimal" _ d -> Decimal $ s d
-    Rule "data" _ p -> error $ show p
+    Rule "data_expr" _ p -> toDataExpr s p 
     Rule "call" _ p -> toCall s p
-    Rule "identifier" _ p -> Identifier . Id $ s p
-    Rule "lambda" _ p -> error $ show p
+    Rule "identifier" _ p -> Identifier . LowerId $ s p
+    Rule "lambda" _ p -> toLambda s p
     e -> error $ "At -> " ++ show (s rule) ++ " \n " ++ show e
+
+toLambda s rule =
+  case rule of
+    Seq _ [_,identifier,_,_,_,expr] -> Lambda (LowerId $ s identifier) (toExpr s expr)
+
+toDataExpr s rule =
+  case rule of
+    Seq _ [dataid,exprs] -> EData (UpperId $ s dataid) (toExprs s exprs)
+  
+toExprs s rule =
+  let
+    toExp r =
+      case r of
+        Seq _ [_, expr] -> toExpr s expr
+    result = unSeq (fmap toExp) $ unRule "exprs" rule
+  in
+    result
+
 
 toGuardExpr s rule =
   case rule of
@@ -214,7 +271,7 @@ toPattern s rule =
   case (unRule "pattern" rule) of
     Rule "hole" _ _ -> PHole
     Rule "decimal" _ d -> PDecimal (s d)
-    Rule "d_pattern" _ (Seq _ [dId,patterns]) -> PData (Id $ s dId) (toPatterns s patterns)
+    Rule "d_pattern" _ (Seq _ [dId,patterns]) -> PData (UpperId $ s dId) (toPatterns s patterns)
 
 toPatterns s rule =
   let
@@ -237,10 +294,10 @@ toAritmExpr s rule =
 
 toCall s rule =
   case rule of
-    Seq _ [id, Rule "args" _ (Seq _ args)] ->
-      Call (Id $ s id) (fmap (Arg . toAltExpr s . unRule "arg" . unSeq (\[_, a] -> a)) args)
-    Seq _ [id, Rule "args" _ Void] ->
-      Call (Id $ s id) []
+    Seq _ [cid, Rule "args" _ (Seq _ args)] ->
+      Call (LowerId $ s cid) (fmap (Arg . toAltExpr s . unRule "arg" . unSeq (\[_, a] -> a)) args)
+    Seq _ [cid, Rule "args" _ Void] ->
+      Call (LowerId $ s cid) []
     a -> error $ show a
 
 makeSubtr input r =
@@ -251,34 +308,39 @@ makeSubtr input r =
 program input = do
   putStrLn $ B8.unpack input
   let result = parse grammar "program" input
-  -- print $ result
+--  print $ result
   let ast = fromJust $ astFrom result
-  -- prettyPrint input ast
+--  prettyPrint input ast
   let s = makeSubtr input
   pPrint $ transformAST s ast
 
 newtype Program = Program [Decls] deriving (Show, Eq)
 
 data Decls
-  = Dexpr Id [Param] Expr
-  | Ddata AST
+  = Dexpr LowerId [Param] Expr
+  | Ddata UpperId [Param] [DataSpec]
   deriving (Show, Eq)
 
-newtype Id = Id BString deriving (Show,Eq) 
+data DataSpec = DataSpec UpperId [Id] deriving (Show, Eq)
+
+data Id = LId LowerId | UId UpperId deriving (Show, Eq)
+newtype LowerId = LowerId BString deriving (Show,Eq) 
+newtype UpperId = UpperId BString deriving (Show,Eq) 
+
 newtype Param = Param BString deriving (Show,Eq)
 data Expr
   = CaseExpr Expr [(Pattern, Expr)]
   | GuardExpr [(Expr,Expr)]
   | LetExpr [Decls] Expr
   | Decimal BString
-  | EData BString [Expr]
-  | Call Id [Arg] 
-  | Identifier Id
-  | Lambda Id Expr
+  | EData UpperId [Expr]
+  | Call LowerId [Arg] 
+  | Identifier LowerId
+  | Lambda LowerId Expr
   | AritmExpr Expr BinOp Expr
   deriving (Show,Eq)
 
-data Pattern = PData Id [Pattern] | PDecimal BString | PId Id | PHole
+data Pattern = PData UpperId [Pattern] | PDecimal BString | PId LowerId | PHole
   deriving (Show, Eq)
 
 newtype BinOp = BinOp BString deriving (Show,Eq)
@@ -287,13 +349,17 @@ newtype Arg = Arg Expr deriving (Show,Eq)
 main = do
   let input1 =
         B8.unlines
-            [ --"fat n = fat' n 1"
-            --, "fat' a acc = acc"
-            --, "fat' n acc = fat' (n - 1) (n * acc)"
-            -- "r = let x = 1 + 2, y = 2 in x - y + x - y + x + x",
-            -- "x = case z | True -> a b | False -> b + 2"
-            -- "x = a b"
-            "x = guard | x == a + b -> c + 2 + c | x == 2 -> 5"
+            [ "fat n = fat' n 1",
+            "fat' a acc = acc",
+            "fat' n acc = fat' (n - 1) (n * acc)",
+            "r = let x = 1 + 2, y = 2 in x - y + x - y + x + x",
+             "x = case z | True -> a b | False -> b + 2",
+             "x = a b",
+             "x = guard | x == a + b -> c + 2 + c | x == 2 -> 5",
+             "data Result a b = Ok a | Err b",
+             "r = Ok 5",
+             "e = Err NotFound",
+            "lam = \\x -> \\y -> x + y"
             ]
 
   {-
