@@ -1,7 +1,5 @@
+{ pkgs }:
 let
-  nixpkgs = import ./nix/pinned.nix {};
-  inherit (nixpkgs) pkgs;
-  localHaskellPkgs = pkgs.haskell.packages.ghc902;
+  localHaskellPkgs = pkgs.haskell.packages.ghc927;
 in
-{ haskellPkgs ? localHaskellPkgs }:
-  haskellPkgs.callCabal2nix "boring-packrat" ./. {}
+  localHaskellPkgs.callCabal2nix "boring-packrat" ./. {}
