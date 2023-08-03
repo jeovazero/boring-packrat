@@ -9,12 +9,14 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem
       (system:
-        let pkgs = nixpkgs.legacyPackages.${system}; in
+        let pkgs = nixpkgs.legacyPackages.${system};
+            haskellPkgs = pkgs.haskell.packages.ghc928;
+        in
         {
            packages = {
-             default = import ./default.nix { pkgs = pkgs; };
+             default = import ./default.nix { inherit haskellPkgs; };
            };
-          devShell = import ./shell.nix { pkgs = pkgs; };
+          devShell = import ./shell.nix { inherit pkgs; inherit haskellPkgs; };
         }
       );
 }

@@ -1,9 +1,6 @@
-{ pkgs }:
+{ pkgs, haskellPkgs }:
 let
-  haskellPackages = pkgs.haskell.packages.ghc927;
-
-  project = import ./default.nix { inherit pkgs; };
-
+  project = import ./default.nix { inherit haskellPkgs; };
 in with pkgs;
 mkShell {
   buildInputs = project.env.nativeBuildInputs ++ [
