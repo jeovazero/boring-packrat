@@ -272,6 +272,12 @@ parseOptional layer loc rule runPeg =
     p@Parsed {} -> p
     NoParse loc' _ -> voidParsed loc' layer
 
+parseNot :: Layer -> Int -> PEG -> PEGRunner -> Result
+parseNot layer loc rule runPeg =
+  case runPeg layer loc rule of
+    p@Parsed {} -> NoParse loc ["ERR_NOT"]
+    NoParse loc' _ -> voidParsed loc layer
+
 parseUntilCond :: Layer -> Int -> PEG -> (Int -> (Bool,Bool)) -> PEGRunner -> Result
 parseUntilCond bLayer bLoc rule cond runPeg = parseUntilCond' bLayer bLoc 0 []
   where
@@ -346,6 +352,7 @@ parse' grammar word =
         Sequence rules        -> parseSequence layer loc rules parsePEG
         Choice rules          -> parseChoice layer loc rules parsePEG
         Optional rule         -> parseOptional layer loc rule parsePEG
+        Not rule              -> parseNot layer loc rule parsePEG
         notImplemented        -> error $ "Not implemented => " ++ show notImplemented
 
     maxLen = bsLength word
